@@ -12,13 +12,14 @@
 use crate::session::{self, Session};
 use rrg_proto::{FileFinderArgs, FileFinderResult, Hash, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions};
 use log::info;
+use std::convert::TryFrom;
 
 type ActionType = rrg_proto::file_finder_action::Action;
 type HashActionOversizedFilePolicy = rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
 type DownloadActionOversizedFilePolicy = rrg_proto::file_finder_download_action_options::OversizedFilePolicy;
 
 #[derive(Debug)]
-pub struct Request2 {  // TODO: rename to Request
+pub struct Request {  // TODO: rename to Request
     paths: Vec<String>,
     action: Option<Action>
 }
@@ -46,7 +47,56 @@ pub enum Action {
     },
 }
 
-pub fn handle<S: Session>(session: &mut S, request: Request2) -> session::Result<()> {
+impl TryFrom<rrg_proto::FileFinderAction> for Action {
+    type Error = session::ParseError;  // TODO: static needed?
+
+    fn try_from(proto: rrg_proto::FileFinderAction) -> Result<Self, Self::Error> {
+        // FileFinderAction::action_type defines which action will be performed. Only
+        // options from selected action are read.
+        let action_type: ActionType =  parse_enum(proto.action_type)?;
+        Ok(match action_type {
+            ActionType::Stat => Action::from(proto.stat),
+            ActionType::Hash => {
+                // TODO: move HASH and DOWNLOAD like STAT is done!
+                let options : FileFinderHashActionOptions = proto.hash.unwrap_or(
+                    FileFinderHashActionOptions{..Default::default()});
+                let oversized_file_policy: HashActionOversizedFilePolicy =
+                    parse_enum(options.oversized_file_policy)?;
+                Action::Hash {
+                    max_size : options.max_size(),
+                    oversized_file_policy,
+                    collect_ext_attrs : options.collect_ext_attrs()
+                }
+            },
+            ActionType::Download => {
+                let options : FileFinderDownloadActionOptions = proto.download.unwrap_or(
+                    FileFinderDownloadActionOptions{..Default::default()});
+                let oversized_file_policy: DownloadActionOversizedFilePolicy =
+                    parse_enum(options.oversized_file_policy)?;
+                Action::Download {
+                    max_size : options.max_size(),
+                    oversized_file_policy,
+                    collect_ext_attrs : options.collect_ext_attrs(),
+                    use_external_stores: options.use_external_stores(),
+                    chunk_size: options.chunk_size()
+                }
+            },
+        })
+    }
+}
+
+impl From<Option<rrg_proto::FileFinderStatActionOptions>> for Action {
+    fn from(proto: Option<rrg_proto::FileFinderStatActionOptions>) -> Action {
+        let options : FileFinderStatActionOptions = proto.unwrap_or(
+            FileFinderStatActionOptions{..Default::default()});
+        Action::Stat {
+            resolve_links : options.resolve_links(),
+            collect_ext_attrs: options.collect_ext_attrs()
+        }
+    }
+}
+
+pub fn handle<S: Session>(session: &mut S, request: Request) -> session::Result<()> {
     info!("Received request: {:?}", request);  // TODO: remove it
 
     // if request.pathtype.is_some() {
@@ -119,56 +169,17 @@ fn parse_enum<T : ProtoEnum<T>>(raw_enum_value: Option<i32>) -> Result<T, sessio
     }
 }
 
-impl super::Request for Request2 {
+impl super::Request for Request {
     type Proto = FileFinderArgs;
 
-    fn from_proto(proto: FileFinderArgs) -> Result<Request2, session::ParseError> {
+    fn from_proto(proto: FileFinderArgs) -> Result<Request, session::ParseError> {
+        // TODO: can I make this statement look better?
         let action: Option<Action> = match proto.action {
-            Some(action) => Some({
-                // FileFinderAction::action_type defines which action will be performed. Only
-                // options from selected action are read.
-                let action_type: ActionType =  parse_enum(action.action_type)?;
-                match action_type {
-                    ActionType::Stat =>
-                    {
-                    // TODO: move each (stat/hash/download) blocks to separate foos
-                        let options : FileFinderStatActionOptions = action.stat.unwrap_or(
-                            FileFinderStatActionOptions{..Default::default()});
-                        Action::Stat {
-                            resolve_links : options.resolve_links(),
-                            collect_ext_attrs: options.collect_ext_attrs() }
-
-                    },
-                    ActionType::Hash => {
-                        let options : FileFinderHashActionOptions = action.hash.unwrap_or(
-                            FileFinderHashActionOptions{..Default::default()});
-                        let oversized_file_policy: HashActionOversizedFilePolicy =
-                            parse_enum(options.oversized_file_policy)?;
-                        Action::Hash {
-                            max_size : options.max_size(),
-                            oversized_file_policy,
-                            collect_ext_attrs : options.collect_ext_attrs()
-                        }
-                    },
-                    ActionType::Download => {
-                        let options : FileFinderDownloadActionOptions = action.download.unwrap_or(
-                            FileFinderDownloadActionOptions{..Default::default()});
-                        let oversized_file_policy: DownloadActionOversizedFilePolicy =
-                            parse_enum(options.oversized_file_policy)?;
-                        Action::Download {
-                            max_size : options.max_size(),
-                            oversized_file_policy,
-                            collect_ext_attrs : options.collect_ext_attrs(),
-                            use_external_stores: options.use_external_stores(),
-                            chunk_size: options.chunk_size()
-                        }
-                    },
-                }
-            }),
+            Some(action) => Some(Action::try_from(action)?),  // TODO: this '?' may be confusing
             None => None
         };
 
-        Ok(Request2 {
+        Ok(Request {
             paths: proto.paths,
             action
         })
