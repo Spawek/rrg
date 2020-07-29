@@ -11,6 +11,7 @@ pub mod session;
 pub mod gzchunked;
 
 use crate::opts::{Opts};
+use log::info;
 
 /// Enters the agent's main loop and waits for messages.
 ///
@@ -27,6 +28,7 @@ use crate::opts::{Opts};
 pub fn listen(opts: &Opts) {
     loop {
         if let Some(message) = message::collect(&opts) {
+            info!("received message: {:?}", message);
             session::handle(message);
         }
     }

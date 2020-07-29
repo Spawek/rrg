@@ -19,6 +19,7 @@ pub fn send(message: rrg_proto::GrrMessage) {
             // If we failed to deliver the message through Fleetspeak, it means
             // that our communication is broken (e.g. the pipe was closed) and
             // the agent should be killed.
+
             panic!("message delivery failure: {}", error)
         };
 }

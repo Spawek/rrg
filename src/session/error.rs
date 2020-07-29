@@ -154,7 +154,7 @@ impl MissingFieldError {
     /// Creates a new error indicating that required field `name` is missing.
     pub fn new(name: &'static str) -> MissingFieldError {
         MissingFieldError {
-            name: name,
+            name
         }
     }
 }
@@ -179,3 +179,44 @@ impl From<MissingFieldError> for ParseError {
         ParseError::malformed(error)
     }
 }
+
+/// An error type for situations where proto enum has a value for which the definition is not known.
+#[derive(Debug)]
+pub struct UnknownProtoEnumValue {
+    enum_name: &'static str,
+    value: i32
+}
+
+impl UnknownProtoEnumValue {
+
+    /// Creates a new error indicating that a proto enum has a value for which the definition
+    /// is not known.
+    pub fn new(enum_name: &'static str, value: i32) -> UnknownProtoEnumValue {
+        UnknownProtoEnumValue {
+            enum_name,
+            value
+        }
+    }
+}
+
+impl Display for UnknownProtoEnumValue {
+
+    fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
+        write!(fmt, "protobuf enum '{}' has unrecognised value: '{}'", self.enum_name, self.value)
+    }
+}
+
+impl std::error::Error for UnknownProtoEnumValue {
+
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+}
+
+impl From<UnknownProtoEnumValue> for ParseError {
+
+    fn from(error: UnknownProtoEnumValue) -> ParseError {
+        ParseError::malformed(error)  // TODO: change malformed to something else
+    }
+}
+
