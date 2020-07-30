@@ -17,11 +17,24 @@ use std::convert::TryFrom;
 type ActionType = rrg_proto::file_finder_action::Action;
 type HashActionOversizedFilePolicy = rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
 type DownloadActionOversizedFilePolicy = rrg_proto::file_finder_download_action_options::OversizedFilePolicy;
+type RegexMatchMode = rrg_proto::file_finder_contents_regex_match_condition::Mode;
+type LiteralMatchMode = rrg_proto::file_finder_contents_literal_match_condition::Mode;
+type XDevMode = rrg_proto::file_finder_args::XDev;
 
 #[derive(Debug)]
-pub struct Request {  // TODO: rename to Request
+enum MatchMode{
+    AllHits,
+    FirstHit
+}
+
+#[derive(Debug)]
+pub struct Request {
     paths: Vec<String>,
-    action: Option<Action>
+    action: Option<Action>,
+    conditions: Vec<Condition>,
+    process_non_regular_files: bool,
+    follow_links: bool,
+    xdev_mode: XDevMode
 }
 
 #[derive(Debug)]
@@ -32,7 +45,8 @@ pub struct Response {
 pub enum Action {
     Stat {
         resolve_links : bool,
-        collect_ext_attrs : bool},
+        collect_ext_attrs : bool  // TODO: move outside (as it's in all versions?)
+    },
     Hash {
         max_size: u64,
         oversized_file_policy: HashActionOversizedFilePolicy,
@@ -47,52 +61,107 @@ pub enum Action {
     },
 }
 
+#[derive(Debug)]
+pub enum Condition {
+    MinModificationTime(std::time::SystemTime),
+    MaxModificationTime(std::time::SystemTime),
+    MinAccessTime(std::time::SystemTime),
+    MaxAccessTime(std::time::SystemTime),
+    MinInodeChangeTime(std::time::SystemTime),
+    MaxInodeChangeTime(std::time::SystemTime),
+    MinSize(u64),
+    MaxSize(u64),
+    ExtFlags(ExtFlagsCondition),
+    ContentsRegexMatch(ContentsRegexMatchCondition),
+    ContentsLiteralMatch(ContentsLiteralMatchCondition)
+}
+
+#[derive(Debug)]
+pub enum ExtFlagsCondition {
+    LinuxBitsSet(u32),
+    LinuxBitsUnset(u32),
+    OsxBitsSet(u32),
+    OsxBitsUnset(u32)
+}
+
+#[derive(Debug)]
+pub struct ContentsRegexMatchCondition {
+    regex : String, // TODO: change to some Vec<u8> type
+    mode: MatchMode,
+    bytes_before: u32,
+    bytes_after: u32,
+    start_offset: u64,
+    length: u64
+}
+
+#[derive(Debug)]
+pub struct ContentsLiteralMatchCondition {
+    literal : String, // TODO: change to some Vec<u8> type
+    mode: MatchMode,
+    start_offset: u64,
+    length: u64,
+    bytes_before: u32,
+    bytes_after: u32,
+    xor_in_key: u32,
+    xor_out_key: u32
+}
+
+pub fn time_from_micros(micros : u64) -> std::time::SystemTime{
+    return std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_micros(micros))
+        .unwrap_or_else(||panic!("Cannot create std::time::SystemTime from micros: {}", micros));
+}
+
 impl TryFrom<rrg_proto::FileFinderAction> for Action {
-    type Error = session::ParseError;  // TODO: static needed?
+    type Error = session::ParseError;
 
     fn try_from(proto: rrg_proto::FileFinderAction) -> Result<Self, Self::Error> {
         // FileFinderAction::action_type defines which action will be performed. Only
         // options from selected action are read.
         let action_type: ActionType =  parse_enum(proto.action_type)?;
         Ok(match action_type {
-            ActionType::Stat => Action::from(proto.stat),
-            ActionType::Hash => {
-                // TODO: move HASH and DOWNLOAD like STAT is done!
-                let options : FileFinderHashActionOptions = proto.hash.unwrap_or(
-                    FileFinderHashActionOptions{..Default::default()});
-                let oversized_file_policy: HashActionOversizedFilePolicy =
-                    parse_enum(options.oversized_file_policy)?;
-                Action::Hash {
-                    max_size : options.max_size(),
-                    oversized_file_policy,
-                    collect_ext_attrs : options.collect_ext_attrs()
-                }
-            },
-            ActionType::Download => {
-                let options : FileFinderDownloadActionOptions = proto.download.unwrap_or(
-                    FileFinderDownloadActionOptions{..Default::default()});
-                let oversized_file_policy: DownloadActionOversizedFilePolicy =
-                    parse_enum(options.oversized_file_policy)?;
-                Action::Download {
-                    max_size : options.max_size(),
-                    oversized_file_policy,
-                    collect_ext_attrs : options.collect_ext_attrs(),
-                    use_external_stores: options.use_external_stores(),
-                    chunk_size: options.chunk_size()
-                }
-            },
+            ActionType::Stat => Action::from(proto.stat.unwrap_or_default()),
+            ActionType::Hash => Action::try_from(proto.hash.unwrap_or_default())?,
+            ActionType::Download => Action::try_from(proto.download.unwrap_or_default())?
         })
     }
 }
 
-impl From<Option<rrg_proto::FileFinderStatActionOptions>> for Action {
-    fn from(proto: Option<rrg_proto::FileFinderStatActionOptions>) -> Action {
-        let options : FileFinderStatActionOptions = proto.unwrap_or(
-            FileFinderStatActionOptions{..Default::default()});
+impl From<FileFinderStatActionOptions> for Action {
+    fn from(proto: FileFinderStatActionOptions) -> Action {
         Action::Stat {
-            resolve_links : options.resolve_links(),
-            collect_ext_attrs: options.collect_ext_attrs()
+            resolve_links : proto.resolve_links(),
+            collect_ext_attrs: proto.collect_ext_attrs()
         }
+    }
+}
+
+impl TryFrom<FileFinderHashActionOptions> for Action {
+    type Error = session::ParseError;
+
+    fn try_from(proto: FileFinderHashActionOptions) -> Result<Self, Self::Error>{
+        let oversized_file_policy: HashActionOversizedFilePolicy =
+            parse_enum(proto.oversized_file_policy)?;
+        Ok(Action::Hash {
+            oversized_file_policy,
+            collect_ext_attrs : proto.collect_ext_attrs(),
+            max_size: proto.max_size()
+        })
+    }
+}
+
+impl TryFrom<FileFinderDownloadActionOptions> for Action {
+    type Error = session::ParseError;
+
+    fn try_from(proto: FileFinderDownloadActionOptions) -> Result<Self, Self::Error>{
+        let oversized_file_policy: DownloadActionOversizedFilePolicy =
+            parse_enum(proto.oversized_file_policy)?;
+        Ok(Action::Download {
+            oversized_file_policy,
+            max_size : proto.max_size(),
+            collect_ext_attrs : proto.collect_ext_attrs(),
+            use_external_stores: proto.use_external_stores(),
+            chunk_size: proto.chunk_size()
+        })
     }
 }
 
@@ -126,33 +195,44 @@ pub fn handle<S: Session>(session: &mut S, request: Request) -> session::Result<
 
 trait ProtoEnum<T> {
     fn default() -> T;
+
+    // Returns value of the enum or None if the input i32 does not describe any know enum value.
     fn from_i32(val: i32) -> Option<T>;
 }
 
 impl ProtoEnum<ActionType> for ActionType {
-    fn default() -> ActionType {
-        FileFinderAction { ..Default::default() }.action_type()
+    fn default() -> Self {
+        FileFinderAction::default().action_type()
     }
-    fn from_i32(val: i32) -> Option<ActionType> {
+    fn from_i32(val: i32) -> Option<Self> {
         ActionType::from_i32(val)
     }
 }
 
 impl ProtoEnum<HashActionOversizedFilePolicy> for HashActionOversizedFilePolicy {
-    fn default() -> HashActionOversizedFilePolicy {
-        FileFinderHashActionOptions { ..Default::default() }.oversized_file_policy()
+    fn default() -> Self {
+        FileFinderHashActionOptions::default().oversized_file_policy()
     }
-    fn from_i32(val: i32) -> Option<HashActionOversizedFilePolicy> {
+    fn from_i32(val: i32) -> Option<Self> {
         HashActionOversizedFilePolicy::from_i32(val)
     }
 }
 
 impl ProtoEnum<DownloadActionOversizedFilePolicy> for DownloadActionOversizedFilePolicy {
-    fn default() -> DownloadActionOversizedFilePolicy {
-        FileFinderDownloadActionOptions { ..Default::default() }.oversized_file_policy()
+    fn default() -> Self {
+        FileFinderDownloadActionOptions::default().oversized_file_policy()
     }
-    fn from_i32(val: i32) -> Option<DownloadActionOversizedFilePolicy> {
+    fn from_i32(val: i32) -> Option<Self> {
         DownloadActionOversizedFilePolicy::from_i32(val)
+    }
+}
+
+impl ProtoEnum<XDevMode> for XDevMode {
+    fn default() -> Self {
+        FileFinderArgs::default().xdev()
+    }
+    fn from_i32(val: i32) -> Option<Self> {
+        XDevMode::from_i32(val)
     }
 }
 
@@ -173,6 +253,13 @@ impl super::Request for Request {
     type Proto = FileFinderArgs;
 
     fn from_proto(proto: FileFinderArgs) -> Result<Request, session::ParseError> {
+
+        let follow_links = proto.follow_links();
+        let process_non_regular_files = proto.process_non_regular_files();
+        let xdev_mode = parse_enum(proto.xdev)?;
+        
+        let conditions = vec![]; // TODO: implement me!
+
         // TODO: can I make this statement look better?
         let action: Option<Action> = match proto.action {
             Some(action) => Some(Action::try_from(action)?),  // TODO: this '?' may be confusing
@@ -181,7 +268,11 @@ impl super::Request for Request {
 
         Ok(Request {
             paths: proto.paths,
-            action
+            action,
+            conditions,
+            follow_links,
+            process_non_regular_files,
+            xdev_mode,
         })
     }
 }

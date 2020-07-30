@@ -219,3 +219,6 @@ pub fn micros(time: std::time::SystemTime) -> Result<u64, MicrosError> {
     let time_micros = time.duration_since(std::time::UNIX_EPOCH)?.as_micros();
     Ok(std::convert::TryInto::try_into(time_micros)?)
 }
+
+
+
