@@ -4,13 +4,9 @@
 // in the LICENSE file or at https://opensource.org/licenses/MIT.
 
 //! TODO: add a comment
-//!
-//! TODO: how should % be handled? how does it support multiple files?  TODO: find example query with multiple returns
-//! TODO: why path_spec::PathType (and other enums) are not resolved in proto, but an int is returned?
-//!     handle it somehow
 
 use crate::session::{self, Session};
-use rrg_proto::{FileFinderArgs, FileFinderResult, Hash, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions};
+use rrg_proto::{FileFinderArgs, FileFinderResult, Hash, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions, FileFinderCondition, FileFinderModificationTimeCondition, FileFinderAccessTimeCondition, FileFinderInodeChangeTimeCondition, FileFinderSizeCondition};
 use log::info;
 use std::convert::TryFrom;
 
@@ -19,6 +15,7 @@ type HashActionOversizedFilePolicy = rrg_proto::file_finder_hash_action_options:
 type DownloadActionOversizedFilePolicy = rrg_proto::file_finder_download_action_options::OversizedFilePolicy;
 type RegexMatchMode = rrg_proto::file_finder_contents_regex_match_condition::Mode;
 type LiteralMatchMode = rrg_proto::file_finder_contents_literal_match_condition::Mode;
+type ConditionType = rrg_proto::file_finder_condition::Type;
 type XDevMode = rrg_proto::file_finder_args::XDev;
 
 #[derive(Debug)]
@@ -210,21 +207,13 @@ impl ProtoEnum<ActionType> for ActionType {
 }
 
 impl ProtoEnum<HashActionOversizedFilePolicy> for HashActionOversizedFilePolicy {
-    fn default() -> Self {
-        FileFinderHashActionOptions::default().oversized_file_policy()
-    }
-    fn from_i32(val: i32) -> Option<Self> {
-        HashActionOversizedFilePolicy::from_i32(val)
-    }
+    fn default() -> Self { FileFinderHashActionOptions::default().oversized_file_policy() }
+    fn from_i32(val: i32) -> Option<Self> { HashActionOversizedFilePolicy::from_i32(val) }
 }
 
 impl ProtoEnum<DownloadActionOversizedFilePolicy> for DownloadActionOversizedFilePolicy {
-    fn default() -> Self {
-        FileFinderDownloadActionOptions::default().oversized_file_policy()
-    }
-    fn from_i32(val: i32) -> Option<Self> {
-        DownloadActionOversizedFilePolicy::from_i32(val)
-    }
+    fn default() -> Self { FileFinderDownloadActionOptions::default().oversized_file_policy() }
+    fn from_i32(val: i32) -> Option<Self> { DownloadActionOversizedFilePolicy::from_i32(val) }
 }
 
 impl ProtoEnum<XDevMode> for XDevMode {
@@ -233,6 +222,15 @@ impl ProtoEnum<XDevMode> for XDevMode {
     }
     fn from_i32(val: i32) -> Option<Self> {
         XDevMode::from_i32(val)
+    }
+}
+
+impl ProtoEnum<ConditionType> for ConditionType {
+    fn default() -> Self {
+        FileFinderCondition::default().condition_type()
+    }
+    fn from_i32(val: i32) -> Option<Self> {
+        ConditionType::from_i32(val)
     }
 }
 
@@ -249,6 +247,93 @@ fn parse_enum<T : ProtoEnum<T>>(raw_enum_value: Option<i32>) -> Result<T, sessio
     }
 }
 
+fn get_modification_time_conditions(proto : Option<FileFinderModificationTimeCondition>) -> Vec<Condition> {
+    match proto {
+        Some(options) => {
+            let mut conditions: Vec<Condition> = vec![];
+            if options.min_last_modified_time.is_some() {
+                conditions.push(Condition::MinModificationTime(
+                    time_from_micros(options.min_last_modified_time.unwrap())))
+            }
+            if options.max_last_modified_time.is_some() {
+                conditions.push(Condition::MaxModificationTime(
+                    time_from_micros(options.max_last_modified_time.unwrap())));
+            }
+            conditions
+        }
+        None => vec![]
+    }
+}
+
+fn get_access_time_conditions(proto : Option<FileFinderAccessTimeCondition>) -> Vec<Condition> {
+    match proto {
+        Some(options) => {
+            let mut conditions: Vec<Condition> = vec![];
+            if options.min_last_access_time.is_some() {
+                conditions.push(Condition::MinAccessTime(
+                    time_from_micros(options.min_last_access_time.unwrap())))
+            }
+            if options.max_last_access_time.is_some() {
+                conditions.push(Condition::MaxAccessTime(
+                    time_from_micros(options.max_last_access_time.unwrap())));
+            }
+            conditions
+        }
+        None => vec![]
+    }
+}
+
+fn get_inode_change_time_conditions(proto : Option<FileFinderInodeChangeTimeCondition>) -> Vec<Condition> {
+    match proto {
+        Some(options) => {
+            let mut conditions: Vec<Condition> = vec![];
+            if options.min_last_inode_change_time.is_some() {
+                conditions.push(Condition::MinInodeChangeTime(
+                    time_from_micros(options.min_last_inode_change_time.unwrap())))
+            }
+            if options.max_last_inode_change_time.is_some() {
+                conditions.push(Condition::MaxInodeChangeTime(
+                    time_from_micros(options.max_last_inode_change_time.unwrap())));
+            }
+            conditions
+        }
+        None => vec![]
+    }
+}
+
+fn get_size_conditions(proto : Option<FileFinderSizeCondition>) -> Vec<Condition> {
+    match proto {
+        Some(options) => {
+            let mut conditions: Vec<Condition> = vec![];
+            if options.min_last_inode_change_time.is_some() {
+                conditions.push(Condition::MinInodeChangeTime(
+                    time_from_micros(options.min_last_inode_change_time.unwrap())))
+            }
+            conditions.push(Condition::MaxInodeChangeTime(
+                time_from_micros(options.max_last_inode_change_time())));
+            conditions
+        }
+        None => vec![]
+    }
+}
+
+fn get_conditions(proto : FileFinderCondition) -> Result<Vec<Condition>, session::ParseError> {
+    if proto.condition_type.is_none(){
+        return Ok(vec![]);
+    }
+    let condition_type = parse_enum(proto.condition_type)?;
+
+    Ok(match condition_type {
+        ConditionType::ModificationTime => get_modification_time_conditions(proto.modification_time),
+        ConditionType::AccessTime => get_access_time_conditions(proto.access_time),
+        ConditionType::InodeChangeTime => get_inode_change_time_conditions(proto.inode_change_time),
+        ConditionType::Size => get_size_conditions(proto.size),  // TODO: remember to use default for max size here
+        ConditionType::ExtFlags => vec![],
+        ConditionType::ContentsRegexMatch => vec![],
+        ConditionType::ContentsLiteralMatch => vec![]
+    })
+}
+
 impl super::Request for Request {
     type Proto = FileFinderArgs;
 
@@ -257,12 +342,15 @@ impl super::Request for Request {
         let follow_links = proto.follow_links();
         let process_non_regular_files = proto.process_non_regular_files();
         let xdev_mode = parse_enum(proto.xdev)?;
-        
-        let conditions = vec![]; // TODO: implement me!
+
+        let mut conditions = vec![];
+        for proto_condition in proto.conditions {
+            conditions.extend(get_conditions(proto_condition)?);
+        }
 
         // TODO: can I make this statement look better?
         let action: Option<Action> = match proto.action {
-            Some(action) => Some(Action::try_from(action)?),  // TODO: this '?' may be confusing
+            Some(action) => Some(Action::try_from(action)?),
             None => None
         };
 
