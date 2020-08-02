@@ -6,7 +6,7 @@
 //! TODO: add a comment
 
 use crate::session::{self, Session};
-use rrg_proto::{FileFinderArgs, FileFinderResult, Hash, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions, FileFinderCondition, FileFinderModificationTimeCondition, FileFinderAccessTimeCondition, FileFinderInodeChangeTimeCondition, FileFinderSizeCondition};
+use rrg_proto::{FileFinderArgs, FileFinderResult, Hash, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions, FileFinderCondition, FileFinderModificationTimeCondition, FileFinderAccessTimeCondition, FileFinderInodeChangeTimeCondition, FileFinderSizeCondition, FileFinderExtFlagsCondition, FileFinderContentsRegexMatchCondition, FileFinderContentsLiteralMatchCondition};
 use log::info;
 use std::convert::TryFrom;
 
@@ -68,9 +68,12 @@ pub enum Condition {
     MaxInodeChangeTime(std::time::SystemTime),
     MinSize(u64),
     MaxSize(u64),
-    ExtFlags(ExtFlagsCondition),
-    ContentsRegexMatch(ContentsRegexMatchCondition),
-    ContentsLiteralMatch(ContentsLiteralMatchCondition)
+    ExtFlagsLinuxBitsSet(u32),
+    ExtFlagsLinuxBitsUnset(u32),
+    ExtFlagsOsxBitsSet(u32),
+    ExtFlagsOsxBitsUnset(u32),
+    ContentsRegexMatch(ContentsRegexMatchConditionOptions),
+    ContentsLiteralMatch(ContentsLiteralMatchConditionOptions)
 }
 
 #[derive(Debug)]
@@ -82,7 +85,7 @@ pub enum ExtFlagsCondition {
 }
 
 #[derive(Debug)]
-pub struct ContentsRegexMatchCondition {
+pub struct ContentsRegexMatchConditionOptions {
     regex : String, // TODO: change to some Vec<u8> type
     mode: MatchMode,
     bytes_before: u32,
@@ -92,7 +95,7 @@ pub struct ContentsRegexMatchCondition {
 }
 
 #[derive(Debug)]
-pub struct ContentsLiteralMatchCondition {
+pub struct ContentsLiteralMatchConditionOptions {
     literal : String, // TODO: change to some Vec<u8> type
     mode: MatchMode,
     start_offset: u64,
@@ -234,6 +237,44 @@ impl ProtoEnum<ConditionType> for ConditionType {
     }
 }
 
+impl ProtoEnum<RegexMatchMode> for RegexMatchMode {
+    fn default() -> Self {
+        FileFinderContentsRegexMatchCondition::default().mode()
+    }
+    fn from_i32(val: i32) -> Option<Self> {
+        RegexMatchMode::from_i32(val)
+    }
+}
+
+impl From<RegexMatchMode> for MatchMode
+{
+    fn from(proto: RegexMatchMode) -> Self {
+        match proto {
+            RegexMatchMode::FirstHit => MatchMode::FirstHit,
+            RegexMatchMode::AllHits => MatchMode::AllHits
+        }
+    }
+}
+
+impl ProtoEnum<LiteralMatchMode> for LiteralMatchMode {
+    fn default() -> Self {
+        FileFinderContentsLiteralMatchCondition::default().mode()
+    }
+    fn from_i32(val: i32) -> Option<Self> {
+        LiteralMatchMode::from_i32(val)
+    }
+}
+
+impl From<LiteralMatchMode> for MatchMode
+{
+    fn from(proto: LiteralMatchMode) -> Self {
+        match proto {
+            LiteralMatchMode::FirstHit => MatchMode::FirstHit,
+            LiteralMatchMode::AllHits => MatchMode::AllHits
+        }
+    }
+}
+
 fn parse_enum<T : ProtoEnum<T>>(raw_enum_value: Option<i32>) -> Result<T, session::ParseError> {
     match raw_enum_value
     {
@@ -305,16 +346,97 @@ fn get_size_conditions(proto : Option<FileFinderSizeCondition>) -> Vec<Condition
     match proto {
         Some(options) => {
             let mut conditions: Vec<Condition> = vec![];
-            if options.min_last_inode_change_time.is_some() {
+            if options.min_file_size.is_some() {
                 conditions.push(Condition::MinInodeChangeTime(
-                    time_from_micros(options.min_last_inode_change_time.unwrap())))
+                    time_from_micros(options.min_file_size.unwrap())))
             }
             conditions.push(Condition::MaxInodeChangeTime(
-                time_from_micros(options.max_last_inode_change_time())));
+                time_from_micros(options.max_file_size())));
             conditions
         }
         None => vec![]
     }
+}
+
+fn get_ext_flags_condition(proto: Option<FileFinderExtFlagsCondition>) -> Vec<Condition> {
+    match proto {
+        Some(options) => {
+            let mut conditions: Vec<Condition> = vec![];
+            if options.linux_bits_set.is_some() {
+                conditions.push(Condition::ExtFlagsLinuxBitsSet(
+                    options.linux_bits_set.unwrap()));
+            }
+            if options.linux_bits_unset.is_some() {
+                conditions.push(Condition::ExtFlagsLinuxBitsUnset(
+                    options.linux_bits_unset.unwrap()));
+            }
+            if options.osx_bits_set.is_some() {
+                conditions.push(Condition::ExtFlagsOsxBitsSet(
+                    options.osx_bits_set.unwrap()));
+            }
+            if options.osx_bits_unset.is_some() {
+                conditions.push(Condition::ExtFlagsOsxBitsUnset(
+                    options.osx_bits_unset.unwrap()));
+            }
+
+            conditions
+        }
+        None => vec![]
+    }
+}
+
+// TODO: make it nicer and move it from here
+impl From<std::str::Utf8Error> for session::ParseError {
+
+    fn from(error: std::str::Utf8Error) -> Self {
+        Self::malformed(error)
+    }
+}
+
+fn get_contents_regex_match_condition(proto : Option<FileFinderContentsRegexMatchCondition>) -> Result<Vec<Condition>, session::ParseError> {
+    Ok(match proto {
+        Some(options) => {
+            if options.regex.is_none() { // || options.regex.unwrap().is_empty() {
+                return Ok(vec![])
+            }
+
+            let mode : RegexMatchMode = parse_enum(options.mode)?;
+            let ret = ContentsRegexMatchConditionOptions {
+                regex : std::str::from_utf8(&options.regex.to_owned().unwrap()[..])?.to_owned(),
+                mode: MatchMode::from(mode),
+                bytes_before: options.bytes_before(),
+                bytes_after: options.bytes_after(),
+                start_offset: options.start_offset(),
+                length: options.length()
+            };
+            vec![Condition::ContentsRegexMatch(ret)]
+        }
+        None => vec![]
+    })
+}
+
+fn get_contents_literal_match_condition(proto : Option<FileFinderContentsLiteralMatchCondition>) -> Result<Vec<Condition>, session::ParseError> {
+    Ok(match proto{
+        Some(options) => {
+            if options.literal.is_none() { // || options.regex.unwrap().is_empty() {
+                return Ok(vec![])
+            }
+
+            let mode : LiteralMatchMode = parse_enum(options.mode)?;
+            let ret = ContentsLiteralMatchConditionOptions {
+                literal : std::str::from_utf8(&options.literal.to_owned().unwrap()[..])?.to_owned(),
+                mode: MatchMode::from(mode),
+                bytes_before: options.bytes_before(),
+                bytes_after: options.bytes_after(),
+                start_offset: options.start_offset(),
+                length: options.length(),
+                xor_in_key: options.xor_in_key(),
+                xor_out_key: options.xor_out_key()
+            };
+            vec![Condition::ContentsLiteralMatch(ret)]
+        }
+        None => vec![]
+    })
 }
 
 fn get_conditions(proto : FileFinderCondition) -> Result<Vec<Condition>, session::ParseError> {
@@ -327,10 +449,10 @@ fn get_conditions(proto : FileFinderCondition) -> Result<Vec<Condition>, session
         ConditionType::ModificationTime => get_modification_time_conditions(proto.modification_time),
         ConditionType::AccessTime => get_access_time_conditions(proto.access_time),
         ConditionType::InodeChangeTime => get_inode_change_time_conditions(proto.inode_change_time),
-        ConditionType::Size => get_size_conditions(proto.size),  // TODO: remember to use default for max size here
-        ConditionType::ExtFlags => vec![],
-        ConditionType::ContentsRegexMatch => vec![],
-        ConditionType::ContentsLiteralMatch => vec![]
+        ConditionType::Size => get_size_conditions(proto.size),
+        ConditionType::ExtFlags => get_ext_flags_condition(proto.ext_flags),
+        ConditionType::ContentsRegexMatch => get_contents_regex_match_condition(proto.contents_regex_match)?,
+        ConditionType::ContentsLiteralMatch => get_contents_literal_match_condition(proto.contents_literal_match)?
     })
 }
 
