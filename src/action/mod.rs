@@ -118,7 +118,7 @@ where
 
 
         "GetMemorySize" => task.execute(self::memsize::handle),
-        "FileFinderOS" => task.execute(self::client_side_file_finder::handle),
+        "FileFinderOS" => task.execute(self::client_side_file_finder::action::handle),
         action => return Err(session::Error::Dispatch(String::from(action))),
     }
 }

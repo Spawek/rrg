@@ -423,20 +423,29 @@ fn get_contents_regex_match_condition(proto : Option<FileFinderContentsRegexMatc
 fn get_contents_literal_match_condition(proto : Option<FileFinderContentsLiteralMatchCondition>) -> Result<Vec<Condition>, session::ParseError> {
     Ok(match proto{
         Some(options) => {
+            let bytes_before = options.bytes_before();
+            let bytes_after =options.bytes_after();
+            let start_offset = options.start_offset();
+            let length = options.length();
+            let xor_in_key =options.xor_in_key();
+            let xor_out_key = options.xor_out_key();
+            let proto_mode : LiteralMatchMode = parse_enum(options.mode)?;
+            let mode = MatchMode::from(proto_mode);
+
             if options.literal.is_none() {
                 return Ok(vec![])
             }
+            let literal = options.literal.unwrap();
 
-            let mode : LiteralMatchMode = parse_enum(options.mode)?;
             let ret = ContentsLiteralMatchConditionOptions {
-                literal : options.literal.unwrap(),
-                mode: MatchMode::from(mode),
-                bytes_before: options.bytes_before(),
-                bytes_after: options.bytes_after(),
-                start_offset: options.start_offset(),
-                length: options.length(),
-                xor_in_key: options.xor_in_key(),
-                xor_out_key: options.xor_out_key()
+                literal,
+                mode,
+                bytes_before,
+                bytes_after,
+                start_offset,
+                length,
+                xor_in_key,
+                xor_out_key,
             };
             vec![Condition::ContentsLiteralMatch(ret)]
         }
@@ -461,7 +470,7 @@ fn get_conditions(proto : FileFinderCondition) -> Result<Vec<Condition>, session
     })
 }
 
-impl super::Request for Request {
+impl super::super::Request for Request {
     type Proto = FileFinderArgs;
 
     fn from_proto(proto: FileFinderArgs) -> Result<Request, session::ParseError> {
@@ -491,7 +500,7 @@ impl super::Request for Request {
     }
 }
 
-impl super::Response for Response {
+impl super::super::Response for Response {
 
     const RDF_NAME: Option<&'static str> = Some("FileFinderResult");  // ???
 
