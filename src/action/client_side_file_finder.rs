@@ -5,10 +5,11 @@
 
 //! TODO: add a comment
 
-use crate::session::{self, Session};
+use crate::session::{self, Session, RegexParseError, UnknownEnumValueError};
 use rrg_proto::{FileFinderArgs, FileFinderResult, Hash, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions, FileFinderCondition, FileFinderModificationTimeCondition, FileFinderAccessTimeCondition, FileFinderInodeChangeTimeCondition, FileFinderSizeCondition, FileFinderExtFlagsCondition, FileFinderContentsRegexMatchCondition, FileFinderContentsLiteralMatchCondition};
 use log::info;
 use std::convert::TryFrom;
+use regex::Regex;
 
 type ActionType = rrg_proto::file_finder_action::Action;
 type HashActionOversizedFilePolicy = rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
@@ -77,16 +78,8 @@ pub enum Condition {
 }
 
 #[derive(Debug)]
-pub enum ExtFlagsCondition {
-    LinuxBitsSet(u32),
-    LinuxBitsUnset(u32),
-    OsxBitsSet(u32),
-    OsxBitsUnset(u32)
-}
-
-#[derive(Debug)]
 pub struct ContentsRegexMatchConditionOptions {
-    regex : String, // TODO: change to some Vec<u8> type
+    regex: Regex,
     mode: MatchMode,
     bytes_before: u32,
     bytes_after: u32,
@@ -96,13 +89,13 @@ pub struct ContentsRegexMatchConditionOptions {
 
 #[derive(Debug)]
 pub struct ContentsLiteralMatchConditionOptions {
-    literal : String, // TODO: change to some Vec<u8> type
+    literal: Vec<u8>,
     mode: MatchMode,
     start_offset: u64,
     length: u64,
     bytes_before: u32,
     bytes_after: u32,
-    xor_in_key: u32,
+    xor_in_key: u32, // TODO: do not support for now
     xor_out_key: u32
 }
 
@@ -280,8 +273,8 @@ fn parse_enum<T : ProtoEnum<T>>(raw_enum_value: Option<i32>) -> Result<T, sessio
     {
         Some(int_value) => match T::from_i32(int_value) {
             Some(parsed_value) => Ok(parsed_value),
-            None => Err(session::ParseError::from(
-                session::UnknownProtoEnumValue::new(
+            None => Err(session::ParseError::from(  // TODO: remove ::from?
+                session::UnknownEnumValueError::new(
                     std::any::type_name::<T>(), int_value)))
         }
         None => Ok(T::default())
@@ -385,29 +378,41 @@ fn get_ext_flags_condition(proto: Option<FileFinderExtFlagsCondition>) -> Vec<Co
     }
 }
 
-// TODO: make it nicer and move it from here
-impl From<std::str::Utf8Error> for session::ParseError {
+fn parse_regex(bytes : Vec<u8>) -> Result<Regex, session::RegexParseError> {
+    let str = match std::str::from_utf8(bytes.as_slice())
+    {
+        Ok(v) => Ok(v),
+        Err(e) => Err(RegexParseError::new(bytes.clone(), e.to_string()))
+    }?;
 
-    fn from(error: std::str::Utf8Error) -> Self {
-        Self::malformed(error)
+    match Regex::new(str) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(RegexParseError::new(bytes, e.to_string()))
     }
 }
 
 fn get_contents_regex_match_condition(proto : Option<FileFinderContentsRegexMatchCondition>) -> Result<Vec<Condition>, session::ParseError> {
     Ok(match proto {
         Some(options) => {
-            if options.regex.is_none() { // || options.regex.unwrap().is_empty() {
+            let bytes_before = options.bytes_before();
+            let bytes_after = options.bytes_after();
+            let start_offset = options.start_offset();
+            let length = options.length();
+            let proto_mode : RegexMatchMode = parse_enum(options.mode)?;
+            let mode= MatchMode::from(proto_mode);
+
+            if options.regex.is_none() {
                 return Ok(vec![])
             }
+            let regex = parse_regex(options.regex.unwrap())?;
 
-            let mode : RegexMatchMode = parse_enum(options.mode)?;
             let ret = ContentsRegexMatchConditionOptions {
-                regex : std::str::from_utf8(&options.regex.to_owned().unwrap()[..])?.to_owned(),
-                mode: MatchMode::from(mode),
-                bytes_before: options.bytes_before(),
-                bytes_after: options.bytes_after(),
-                start_offset: options.start_offset(),
-                length: options.length()
+                regex,
+                mode,
+                bytes_before,
+                bytes_after,
+                start_offset,
+                length
             };
             vec![Condition::ContentsRegexMatch(ret)]
         }
@@ -418,13 +423,13 @@ fn get_contents_regex_match_condition(proto : Option<FileFinderContentsRegexMatc
 fn get_contents_literal_match_condition(proto : Option<FileFinderContentsLiteralMatchCondition>) -> Result<Vec<Condition>, session::ParseError> {
     Ok(match proto{
         Some(options) => {
-            if options.literal.is_none() { // || options.regex.unwrap().is_empty() {
+            if options.literal.is_none() {
                 return Ok(vec![])
             }
 
             let mode : LiteralMatchMode = parse_enum(options.mode)?;
             let ret = ContentsLiteralMatchConditionOptions {
-                literal : std::str::from_utf8(&options.literal.to_owned().unwrap()[..])?.to_owned(),
+                literal : options.literal.unwrap(),
                 mode: MatchMode::from(mode),
                 bytes_before: options.bytes_before(),
                 bytes_after: options.bytes_after(),
@@ -470,7 +475,6 @@ impl super::Request for Request {
             conditions.extend(get_conditions(proto_condition)?);
         }
 
-        // TODO: can I make this statement look better?
         let action: Option<Action> = match proto.action {
             Some(action) => Some(Action::try_from(action)?),
             None => None
@@ -532,3 +536,4 @@ mod tests {
 }
 
 // TODO: create a dir for this action and do request/response in separate files from the main logic
+// TODO: tests on a real FS
