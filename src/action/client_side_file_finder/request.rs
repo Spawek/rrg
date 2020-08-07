@@ -3,10 +3,11 @@
 // Use of this source code is governed by an MIT-style license that can be found
 // in the LICENSE file or at https://opensource.org/licenses/MIT.
 
-//! TODO: add a comment
+//! Defines an internal type for client side file finder action and provides a function converting
+//! proto format of the request (rrg_proto::FileFinderArgs) to the internal format.
 
 use regex::Regex;
-use crate::session::{self, ParseError, RegexParseError, UnknownEnumValueError};
+use crate::session::{ParseError, RegexParseError, UnknownEnumValueError};
 use rrg_proto::{FileFinderArgs, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions, FileFinderCondition, FileFinderModificationTimeCondition, FileFinderAccessTimeCondition, FileFinderInodeChangeTimeCondition, FileFinderSizeCondition, FileFinderExtFlagsCondition, FileFinderContentsRegexMatchCondition, FileFinderContentsLiteralMatchCondition};
 use std::convert::TryFrom;
 
@@ -309,11 +310,9 @@ fn get_size_conditions(proto : Option<FileFinderSizeCondition>) -> Vec<Condition
         Some(options) => {
             let mut conditions: Vec<Condition> = vec![];
             if options.min_file_size.is_some() {
-                conditions.push(Condition::MinInodeChangeTime(
-                    time_from_micros(options.min_file_size.unwrap())))
+                conditions.push(Condition::MinSize(options.min_file_size.unwrap()));
             }
-            conditions.push(Condition::MaxInodeChangeTime(
-                time_from_micros(options.max_file_size())));
+            conditions.push(Condition::MaxSize(options.max_file_size()));
             conditions
         }
         None => vec![]
@@ -360,7 +359,7 @@ fn parse_regex(bytes : Vec<u8>) -> Result<Regex, RegexParseError> {
     }
 }
 
-fn get_contents_regex_match_condition(proto : Option<FileFinderContentsRegexMatchCondition>) -> Result<Vec<Condition>, session::ParseError> {
+fn get_contents_regex_match_condition(proto : Option<FileFinderContentsRegexMatchCondition>) -> Result<Vec<Condition>, ParseError> {
     Ok(match proto {
         Some(options) => {
             let bytes_before = options.bytes_before();
@@ -389,7 +388,7 @@ fn get_contents_regex_match_condition(proto : Option<FileFinderContentsRegexMatc
     })
 }
 
-fn get_contents_literal_match_condition(proto : Option<FileFinderContentsLiteralMatchCondition>) -> Result<Vec<Condition>, session::ParseError> {
+fn get_contents_literal_match_condition(proto : Option<FileFinderContentsLiteralMatchCondition>) -> Result<Vec<Condition>, ParseError> {
     Ok(match proto{
         Some(options) => {
             let bytes_before = options.bytes_before();
@@ -466,5 +465,23 @@ impl super::super::Request for Request {
             process_non_regular_files,
             xdev_mode,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_request_test() {
+        let args = FileFinderArgs{..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);  // TODO: get rid of super::super::super?
+        assert!(request.is_ok());
+        let request = request.unwrap();
+        assert!(request.action.is_none());
+        assert!(request.conditions.is_empty());
+        assert_eq!(request.process_non_regular_files, false);
+        assert_eq!(request.follow_links, false);
+        assert_eq!(request.xdev_mode, XDevMode::Local);
     }
 }
