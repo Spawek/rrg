@@ -195,8 +195,8 @@ impl From<MissingFieldError> for ParseError {
 /// An error type for situations where proto enum has a value for which the definition is not known.
 #[derive(Debug)]
 pub struct UnknownEnumValueError {
-    enum_name: &'static str,
-    value: i32
+    pub enum_name: &'static str,
+    pub value: i32
 }
 
 impl UnknownEnumValueError {

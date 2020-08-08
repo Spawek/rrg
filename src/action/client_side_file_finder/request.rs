@@ -37,22 +37,31 @@ enum MatchMode{
 
 #[derive(Debug)]
 pub enum Action {
-    Stat {
-        resolve_links : bool,
-        collect_ext_attrs : bool
-    },
-    Hash {
-        max_size: u64,
-        oversized_file_policy: HashActionOversizedFilePolicy,
-        collect_ext_attrs: bool
-    },
-    Download {
-        max_size: u64,
-        oversized_file_policy: DownloadActionOversizedFilePolicy,
-        use_external_stores: bool,
-        collect_ext_attrs: bool,
-        chunk_size: u64
-    },
+    Stat(StatActionOptions),
+    Hash(HashActionOptions),
+    Download(DownloadActionOptions)
+}
+
+#[derive(Debug)]
+pub struct StatActionOptions {
+    resolve_links : bool,
+    collect_ext_attrs : bool
+}
+
+#[derive(Debug)]
+pub struct HashActionOptions {
+    max_size: u64,
+    oversized_file_policy: HashActionOversizedFilePolicy,
+    collect_ext_attrs: bool
+}
+
+#[derive(Debug)]
+pub struct DownloadActionOptions {
+    max_size: u64,
+    oversized_file_policy: DownloadActionOversizedFilePolicy,
+    use_external_stores: bool,
+    collect_ext_attrs: bool,
+    chunk_size: u64
 }
 
 #[derive(Debug)]
@@ -118,10 +127,10 @@ impl TryFrom<rrg_proto::FileFinderAction> for Action {
 
 impl From<FileFinderStatActionOptions> for Action {
     fn from(proto: FileFinderStatActionOptions) -> Action {
-        Action::Stat {
-            resolve_links : proto.resolve_links(),
+        Action::Stat(StatActionOptions {
+            resolve_links: proto.resolve_links(),
             collect_ext_attrs: proto.collect_ext_attrs()
-        }
+        })
     }
 }
 
@@ -131,11 +140,11 @@ impl TryFrom<FileFinderHashActionOptions> for Action {
     fn try_from(proto: FileFinderHashActionOptions) -> Result<Self, Self::Error>{
         let oversized_file_policy: HashActionOversizedFilePolicy =
             parse_enum(proto.oversized_file_policy)?;
-        Ok(Action::Hash {
+        Ok(Action::Hash(HashActionOptions{
             oversized_file_policy,
             collect_ext_attrs : proto.collect_ext_attrs(),
             max_size: proto.max_size()
-        })
+        }))
     }
 }
 
@@ -145,13 +154,13 @@ impl TryFrom<FileFinderDownloadActionOptions> for Action {
     fn try_from(proto: FileFinderDownloadActionOptions) -> Result<Self, Self::Error>{
         let oversized_file_policy: DownloadActionOversizedFilePolicy =
             parse_enum(proto.oversized_file_policy)?;
-        Ok(Action::Download {
+        Ok(Action::Download(DownloadActionOptions{
             oversized_file_policy,
             max_size : proto.max_size(),
             collect_ext_attrs : proto.collect_ext_attrs(),
             use_external_stores: proto.use_external_stores(),
             chunk_size: proto.chunk_size()
-        })
+        }))
     }
 }
 
@@ -471,6 +480,8 @@ impl super::super::Request for Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
+    use crate::session::UnknownEnumValueError;
 
     #[test]
     fn empty_request_test() {
@@ -484,4 +495,178 @@ mod tests {
         assert_eq!(request.follow_links, false);
         assert_eq!(request.xdev_mode, XDevMode::Local);
     }
+
+    #[test]
+    fn default_stats_action_test() {
+        let args = FileFinderArgs{
+            action: Some(
+                FileFinderAction{
+                    action_type: Some(ActionType::Stat as i32),
+                    ..Default::default()}),
+                 ..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
+        assert!(request.is_ok());
+        let request = request.unwrap();
+        assert!(request.action.is_some());
+        match request.action.unwrap() {
+            Action::Stat(options) => {
+                assert_eq!(options.collect_ext_attrs, false);
+                assert_eq!(options.resolve_links, false);
+            }
+            _ => panic!("Unexpected action type")
+        }
+    }
+
+    #[test]
+    fn stats_action_test() {
+        let args = FileFinderArgs{
+            action: Some(
+                FileFinderAction{
+                    action_type: Some(ActionType::Stat as i32),
+                    stat: Some(FileFinderStatActionOptions{
+                        resolve_links: Some(true),
+                        collect_ext_attrs: Some(true)
+                    }),
+                    ..Default::default()}),
+            ..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
+        assert!(request.is_ok());
+        let request = request.unwrap();
+        assert!(request.action.is_some());
+        match request.action.unwrap() {
+            Action::Stat(options) => {
+                assert_eq!(options.collect_ext_attrs, true);
+                assert_eq!(options.resolve_links, true);
+            }
+            _ => panic!("Unexpected action type")
+        }
+    }
+
+    #[test]
+    fn default_hash_action_test() {
+        let args = FileFinderArgs{
+            action: Some(
+                FileFinderAction{
+                    action_type: Some(ActionType::Hash as i32),
+                    ..Default::default()}),
+            ..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
+        assert!(request.is_ok());
+        let request = request.unwrap();
+        assert!(request.action.is_some());
+        match request.action.unwrap() {
+            Action::Hash(options) => {
+                assert_eq!(options.collect_ext_attrs, false);
+                assert_eq!(options.oversized_file_policy, OversizedFilePolicy::Skip);
+                assert_eq!(options.max_size, 500000000);
+            }
+            _ => panic!("Unexpected action type")
+        }
+    }
+
+    #[test]
+    fn hash_action_test() {
+        let args = FileFinderArgs{
+            action: Some(
+                FileFinderAction{
+                    action_type: Some(ActionType::Hash as i32),
+                    hash: Some(FileFinderHashActionOptions{
+                        collect_ext_attrs: Some(true),
+                        oversized_file_policy: Some(HashActionOversizedFilePolicy::HashTruncated as i32),
+                        max_size: Some(123456),
+                    }),
+                    ..Default::default()}),
+            ..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
+        assert!(request.is_ok());
+        let request = request.unwrap();
+        assert!(request.action.is_some());
+        match request.action.unwrap() {
+            Action::Hash(options) => {
+                assert_eq!(options.collect_ext_attrs, true);
+                assert_eq!(options.oversized_file_policy, HashActionOversizedFilePolicy::HashTruncated);
+                assert_eq!(options.max_size, 123456);
+            }
+            _ => panic!("Unexpected action type")
+        }
+    }
+
+    #[test]
+    fn default_download_action_test() {
+        let args = FileFinderArgs{
+            action: Some(
+                FileFinderAction{
+                    action_type: Some(ActionType::Download as i32),
+                    ..Default::default()}),
+            ..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
+        assert!(request.is_ok());
+        let request = request.unwrap();
+        assert!(request.action.is_some());
+        match request.action.unwrap() {
+            Action::Download(options) => {
+                assert_eq!(options.max_size, 500000000);
+                assert_eq!(options.oversized_file_policy, DownloadActionOversizedFilePolicy::Skip);
+                assert_eq!(options.use_external_stores, true);
+                assert_eq!(options.collect_ext_attrs, false);
+                assert_eq!(options.chunk_size, 524288);
+            }
+            _ => panic!("Unexpected action type")
+        }
+    }
+
+    #[test]
+    fn download_action_test() {
+        let args = FileFinderArgs{
+            action: Some(
+                FileFinderAction{
+                    action_type: Some(ActionType::Download as i32),
+                    download: Some(FileFinderDownloadActionOptions{
+                        max_size: Some(12345),
+                        collect_ext_attrs: Some(true),
+                        oversized_file_policy: Some(DownloadActionOversizedFilePolicy::DownloadTruncated as i32),
+                        use_external_stores: Some(false),
+                        chunk_size: Some(5432)
+                    }),
+                    ..Default::default()}),
+            ..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
+        assert!(request.is_ok());
+        let request = request.unwrap();
+        assert!(request.action.is_some());
+        match request.action.unwrap() {
+            Action::Download(options) => {
+                assert_eq!(options.max_size, 12345);
+                assert_eq!(options.oversized_file_policy, DownloadActionOversizedFilePolicy::DownloadTruncated);
+                assert_eq!(options.use_external_stores, false);
+                assert_eq!(options.collect_ext_attrs, true);
+                assert_eq!(options.chunk_size, 5432);
+            }
+
+            _ => panic!("Unexpected action type")
+        }
+    }
+
+
+    #[test]
+    fn error_on_parsing_unknown_enum_value() {
+        let args = FileFinderArgs{
+            action: Some(
+                FileFinderAction{
+                    action_type: Some(345 as i32),
+                    ..Default::default()
+                    }),
+                ..Default::default()};
+        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
+        assert!(request.is_err());
+        match request.err().unwrap(){
+            ParseError::UnknownEnumValue(error) => {
+                assert_eq!(error.enum_name, std::any::type_name::<ActionType>());
+                assert_eq!(error.value, 345);
+            }
+            _ => panic!()
+        }
+    }
+
+    // TODO: tests for parsing conditions
 }
