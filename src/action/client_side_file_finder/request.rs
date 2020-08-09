@@ -11,17 +11,19 @@ use crate::session::{ParseError, RegexParseError, UnknownEnumValueError};
 use rrg_proto::{FileFinderArgs, FileFinderAction, FileFinderStatActionOptions, FileFinderHashActionOptions, FileFinderDownloadActionOptions, FileFinderCondition, FileFinderModificationTimeCondition, FileFinderAccessTimeCondition, FileFinderInodeChangeTimeCondition, FileFinderSizeCondition, FileFinderExtFlagsCondition, FileFinderContentsRegexMatchCondition, FileFinderContentsLiteralMatchCondition};
 use std::convert::TryFrom;
 
-type ActionType = rrg_proto::file_finder_action::Action;
 type HashActionOversizedFilePolicy = rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
 type DownloadActionOversizedFilePolicy = rrg_proto::file_finder_download_action_options::OversizedFilePolicy;
 type RegexMatchMode = rrg_proto::file_finder_contents_regex_match_condition::Mode;
 type LiteralMatchMode = rrg_proto::file_finder_contents_literal_match_condition::Mode;
+type ActionType = rrg_proto::file_finder_action::Action;
 type ConditionType = rrg_proto::file_finder_condition::Type;
 type XDevMode = rrg_proto::file_finder_args::XDev;
+type PathType = rrg_proto::path_spec::PathType;
 
 #[derive(Debug)]
 pub struct Request {
     paths: Vec<String>,
+    path_type: PathType,
     action: Option<Action>,
     conditions: Vec<Condition>,
     process_non_regular_files: bool,
@@ -172,13 +174,14 @@ trait ProtoEnum<T> {
     fn from_i32(val: i32) -> Option<T>;
 }
 
+impl ProtoEnum<PathType> for PathType{
+    fn default() -> PathType { FileFinderArgs::default().pathtype() }
+    fn from_i32(val: i32) -> Option<PathType> { PathType::from_i32(val) }
+}
+
 impl ProtoEnum<ActionType> for ActionType {
-    fn default() -> Self {
-        FileFinderAction::default().action_type()
-    }
-    fn from_i32(val: i32) -> Option<Self> {
-        ActionType::from_i32(val)
-    }
+    fn default() -> Self { FileFinderAction::default().action_type() }
+    fn from_i32(val: i32) -> Option<Self> { ActionType::from_i32(val) }
 }
 
 impl ProtoEnum<HashActionOversizedFilePolicy> for HashActionOversizedFilePolicy {
@@ -192,30 +195,18 @@ impl ProtoEnum<DownloadActionOversizedFilePolicy> for DownloadActionOversizedFil
 }
 
 impl ProtoEnum<XDevMode> for XDevMode {
-    fn default() -> Self {
-        FileFinderArgs::default().xdev()
-    }
-    fn from_i32(val: i32) -> Option<Self> {
-        XDevMode::from_i32(val)
-    }
+    fn default() -> Self { FileFinderArgs::default().xdev() }
+    fn from_i32(val: i32) -> Option<Self> { XDevMode::from_i32(val) }
 }
 
 impl ProtoEnum<ConditionType> for ConditionType {
-    fn default() -> Self {
-        FileFinderCondition::default().condition_type()
-    }
-    fn from_i32(val: i32) -> Option<Self> {
-        ConditionType::from_i32(val)
-    }
+    fn default() -> Self { FileFinderCondition::default().condition_type() }
+    fn from_i32(val: i32) -> Option<Self> { ConditionType::from_i32(val) }
 }
 
 impl ProtoEnum<RegexMatchMode> for RegexMatchMode {
-    fn default() -> Self {
-        FileFinderContentsRegexMatchCondition::default().mode()
-    }
-    fn from_i32(val: i32) -> Option<Self> {
-        RegexMatchMode::from_i32(val)
-    }
+    fn default() -> Self { FileFinderContentsRegexMatchCondition::default().mode() }
+    fn from_i32(val: i32) -> Option<Self> { RegexMatchMode::from_i32(val) }
 }
 
 impl From<RegexMatchMode> for MatchMode
@@ -455,6 +446,7 @@ impl super::super::Request for Request {
         let follow_links = proto.follow_links();
         let process_non_regular_files = proto.process_non_regular_files();
         let xdev_mode = parse_enum(proto.xdev)?;
+        let path_type = parse_enum(proto.pathtype)?;
 
         let mut conditions = vec![];
         for proto_condition in proto.conditions {
@@ -468,6 +460,7 @@ impl super::super::Request for Request {
 
         Ok(Request {
             paths: proto.paths,
+            path_type,
             action,
             conditions,
             follow_links,
@@ -480,33 +473,61 @@ impl super::super::Request for Request {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
-    use crate::session::UnknownEnumValueError;
+
+    fn get_request(args : FileFinderArgs) -> Request{
+        let request : Result<Request, ParseError> =
+            super::super::super::Request::from_proto(args);
+        assert!(request.is_ok());
+        request.unwrap()
+    }
+
+    fn get_parse_error(args : FileFinderArgs) -> ParseError{
+        let request : Result<Request, ParseError> =
+            super::super::super::Request::from_proto(args);
+        assert!(request.is_err());
+        request.unwrap_err()
+    }
 
     #[test]
     fn empty_request_test() {
-        let args = FileFinderArgs{..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);  // TODO: get rid of super::super::super?
-        assert!(request.is_ok());
-        let request = request.unwrap();
+        let request = get_request(
+            FileFinderArgs{..Default::default()});
+        assert!(request.paths.is_empty());
         assert!(request.action.is_none());
         assert!(request.conditions.is_empty());
+        assert_eq!(request.path_type, PathType::Os);
         assert_eq!(request.process_non_regular_files, false);
         assert_eq!(request.follow_links, false);
         assert_eq!(request.xdev_mode, XDevMode::Local);
     }
 
     #[test]
+    fn basic_root_parameters_test() {
+        let request = get_request(
+            FileFinderArgs{
+            paths: vec!["abc".to_string(), "cba".to_string()],
+            pathtype: Some(PathType::Registry as i32),
+            process_non_regular_files: Some(true),
+            follow_links: Some(true),
+            xdev: Some(rrg_proto::file_finder_args::XDev::Always as i32),
+            ..Default::default()});
+        assert_eq!(request.paths, vec!["abc".to_string(), "cba".to_string()]);
+        assert!(request.action.is_none());
+        assert_eq!(request.path_type, PathType::Registry);
+        assert_eq!(request.process_non_regular_files, true);
+        assert_eq!(request.follow_links, true);
+        assert_eq!(request.xdev_mode, XDevMode::Always);
+    }
+
+    #[test]
     fn default_stats_action_test() {
-        let args = FileFinderArgs{
+        let request = get_request(
+            FileFinderArgs{
             action: Some(
                 FileFinderAction{
                     action_type: Some(ActionType::Stat as i32),
                     ..Default::default()}),
-                 ..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
-        assert!(request.is_ok());
-        let request = request.unwrap();
+                 ..Default::default()});
         assert!(request.action.is_some());
         match request.action.unwrap() {
             Action::Stat(options) => {
@@ -519,7 +540,8 @@ mod tests {
 
     #[test]
     fn stats_action_test() {
-        let args = FileFinderArgs{
+        let request = get_request(
+             FileFinderArgs{
             action: Some(
                 FileFinderAction{
                     action_type: Some(ActionType::Stat as i32),
@@ -528,10 +550,7 @@ mod tests {
                         collect_ext_attrs: Some(true)
                     }),
                     ..Default::default()}),
-            ..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
-        assert!(request.is_ok());
-        let request = request.unwrap();
+            ..Default::default()});
         assert!(request.action.is_some());
         match request.action.unwrap() {
             Action::Stat(options) => {
@@ -544,20 +563,18 @@ mod tests {
 
     #[test]
     fn default_hash_action_test() {
-        let args = FileFinderArgs{
+        let request = get_request(
+             FileFinderArgs{
             action: Some(
                 FileFinderAction{
                     action_type: Some(ActionType::Hash as i32),
                     ..Default::default()}),
-            ..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
-        assert!(request.is_ok());
-        let request = request.unwrap();
+            ..Default::default()});
         assert!(request.action.is_some());
         match request.action.unwrap() {
             Action::Hash(options) => {
                 assert_eq!(options.collect_ext_attrs, false);
-                assert_eq!(options.oversized_file_policy, OversizedFilePolicy::Skip);
+                assert_eq!(options.oversized_file_policy, HashActionOversizedFilePolicy::Skip);
                 assert_eq!(options.max_size, 500000000);
             }
             _ => panic!("Unexpected action type")
@@ -566,7 +583,8 @@ mod tests {
 
     #[test]
     fn hash_action_test() {
-        let args = FileFinderArgs{
+        let request = get_request(
+             FileFinderArgs{
             action: Some(
                 FileFinderAction{
                     action_type: Some(ActionType::Hash as i32),
@@ -576,10 +594,7 @@ mod tests {
                         max_size: Some(123456),
                     }),
                     ..Default::default()}),
-            ..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
-        assert!(request.is_ok());
-        let request = request.unwrap();
+            ..Default::default()});
         assert!(request.action.is_some());
         match request.action.unwrap() {
             Action::Hash(options) => {
@@ -593,15 +608,13 @@ mod tests {
 
     #[test]
     fn default_download_action_test() {
-        let args = FileFinderArgs{
+        let request = get_request(
+            FileFinderArgs{
             action: Some(
                 FileFinderAction{
                     action_type: Some(ActionType::Download as i32),
                     ..Default::default()}),
-            ..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
-        assert!(request.is_ok());
-        let request = request.unwrap();
+            ..Default::default()});
         assert!(request.action.is_some());
         match request.action.unwrap() {
             Action::Download(options) => {
@@ -617,7 +630,8 @@ mod tests {
 
     #[test]
     fn download_action_test() {
-        let args = FileFinderArgs{
+        let request = get_request(
+            FileFinderArgs{
             action: Some(
                 FileFinderAction{
                     action_type: Some(ActionType::Download as i32),
@@ -629,10 +643,7 @@ mod tests {
                         chunk_size: Some(5432)
                     }),
                     ..Default::default()}),
-            ..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
-        assert!(request.is_ok());
-        let request = request.unwrap();
+            ..Default::default()});
         assert!(request.action.is_some());
         match request.action.unwrap() {
             Action::Download(options) => {
@@ -647,26 +658,22 @@ mod tests {
         }
     }
 
-
     #[test]
     fn error_on_parsing_unknown_enum_value() {
-        let args = FileFinderArgs{
+        let err = get_parse_error(FileFinderArgs{
             action: Some(
                 FileFinderAction{
                     action_type: Some(345 as i32),
                     ..Default::default()
                     }),
-                ..Default::default()};
-        let request : Result<Request, ParseError> = super::super::super::Request::from_proto(args);
-        assert!(request.is_err());
-        match request.err().unwrap(){
+                ..Default::default()});
+        match err{
             ParseError::UnknownEnumValue(error) => {
                 assert_eq!(error.enum_name, std::any::type_name::<ActionType>());
                 assert_eq!(error.value, 345);
             }
-            _ => panic!()
+            _ => panic!("Unexpected error type")
         }
     }
 
-    // TODO: tests for parsing conditions
 }
