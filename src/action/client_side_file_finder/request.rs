@@ -963,3 +963,7 @@ mod tests {
         }
     }
 }
+
+// TODO: finish testing conditions
+// TODO: split action/condition to separate files (this is too big)
+// TODO: put enum stuff somewhere else
