@@ -531,7 +531,6 @@ impl super::super::Request for Request {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
 
     fn get_request(args: FileFinderArgs) -> Request {
         let request: Result<Request, ParseError> = super::super::super::Request::from_proto(args);
@@ -763,6 +762,13 @@ mod tests {
     }
 
     #[test]
+    fn time_from_micros_doesnt_panic_on_edge_values_test() {
+        time_from_micros(u64::MIN);
+        time_from_micros(u64::MAX / 2);
+        time_from_micros(u64::MAX);
+    }
+
+    #[test]
     fn default_modification_time_condition_test() {
         let request = get_request(FileFinderArgs {
             conditions: vec![
@@ -777,13 +783,6 @@ mod tests {
             ..Default::default()
         });
         assert!(request.conditions.is_empty());
-    }
-
-    #[test]
-    fn time_from_micros_doesnt_panic_on_edge_values_test() {
-        time_from_micros(u64::MIN);
-        time_from_micros(u64::MAX / 2);
-        time_from_micros(u64::MAX);
     }
 
     #[test]
@@ -828,6 +827,136 @@ mod tests {
         assert_eq!(request.conditions.len(), 1);
         match request.conditions.first().unwrap() {
             Condition::MaxModificationTime(time) => {
+                assert_eq!(&time_from_micros(234), time);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn default_access_time_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::AccessTime as i32),
+                    access_time: Some(FileFinderAccessTimeCondition {
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+        assert!(request.conditions.is_empty());
+    }
+
+    #[test]
+    fn min_access_time_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::AccessTime as i32),
+                    access_time: Some(FileFinderAccessTimeCondition {
+                        min_last_access_time: Some(123),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::MinAccessTime(time) => {
+                assert_eq!(&time_from_micros(123), time);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn max_access_time_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::AccessTime as i32),
+                    access_time: Some(FileFinderAccessTimeCondition {
+                        max_last_access_time: Some(234),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::MaxAccessTime(time) => {
+                assert_eq!(&time_from_micros(234), time);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn default_inode_change_time_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::InodeChangeTime as i32),
+                    inode_change_time: Some(FileFinderInodeChangeTimeCondition {
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+        assert!(request.conditions.is_empty());
+    }
+
+    #[test]
+    fn min_inode_change_time_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::InodeChangeTime as i32),
+                    inode_change_time: Some(FileFinderInodeChangeTimeCondition {
+                        min_last_inode_change_time: Some(123),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::MinInodeChangeTime(time) => {
+                assert_eq!(&time_from_micros(123), time);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn max_inode_change_time_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::InodeChangeTime as i32),
+                    inode_change_time: Some(FileFinderInodeChangeTimeCondition {
+                        max_last_inode_change_time: Some(234),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::MaxInodeChangeTime(time) => {
                 assert_eq!(&time_from_micros(234), time);
             },
             v @ _ => panic!("Unexpected condition type: {:?}", v)
