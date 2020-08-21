@@ -5,6 +5,7 @@ pub trait ProtoEnum<Proto> {
     fn default() -> Proto;
 
     // Returns value of the enum or None if the input i32 does not describe any know enum value.
+    // ::prost::Enumeration cannot be used instead, because it's not a trait.
     fn from_i32(val: i32) -> Option<Proto>;
 }
 
@@ -64,5 +65,4 @@ mod tests {
             e @ _ => panic!("Unexpected error type: {:?}", e),
         }
     }
-
 }
