@@ -39,7 +39,7 @@ pub struct Request {
     xdev_mode: XDevMode,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum MatchMode {
     AllHits,
     FirstHit,
@@ -360,7 +360,9 @@ fn get_size_conditions(proto: Option<FileFinderSizeCondition>) -> Vec<Condition>
             if options.min_file_size.is_some() {
                 conditions.push(Condition::MinSize(options.min_file_size.unwrap()));
             }
-            conditions.push(Condition::MaxSize(options.max_file_size()));
+            if options.max_file_size() < u64::MAX {
+                conditions.push(Condition::MaxSize(options.max_file_size()));
+            }
             conditions
         }
         None => vec![],
@@ -382,7 +384,8 @@ fn get_ext_flags_condition(proto: Option<FileFinderExtFlagsCondition>) -> Vec<Co
                 ));
             }
             if options.osx_bits_set.is_some() {
-                conditions.push(Condition::ExtFlagsOsxBitsSet(options.osx_bits_set.unwrap()));
+                conditions.push(Condition::ExtFlagsOsxBitsSet(
+                    options.osx_bits_set.unwrap()));
             }
             if options.osx_bits_unset.is_some() {
                 conditions.push(Condition::ExtFlagsOsxBitsUnset(
@@ -739,12 +742,13 @@ mod tests {
             }),
             ..Default::default()
         });
+
         match err {
             ParseError::UnknownEnumValue(error) => {
                 assert_eq!(error.enum_name, std::any::type_name::<ActionType>());
                 assert_eq!(error.value, 345);
             }
-            v @ _ => panic!("Unexpected error type: {:?}", v),
+            e @ _ => panic!("Unexpected error type: {:?}", e),
         }
     }
 
@@ -962,8 +966,335 @@ mod tests {
             v @ _ => panic!("Unexpected condition type: {:?}", v)
         }
     }
+
+    #[test]
+    fn default_size_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::Size as i32),
+                    size: Some(FileFinderSizeCondition {
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::MaxSize(size) => {
+                assert_eq!(*size, 20000000);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn min_size_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::Size as i32),
+                    size: Some(FileFinderSizeCondition {
+                        min_file_size: Some(345),
+                        max_file_size: Some(u64::MAX)
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::MinSize(size) => {
+                assert_eq!(*size, 345);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn max_size_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::Size as i32),
+                    size: Some(FileFinderSizeCondition {
+                        max_file_size: Some(798),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::MaxSize(size) => {
+                assert_eq!(*size, 798);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn default_ext_flags_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ExtFlags as i32),
+                    ext_flags: Some(FileFinderExtFlagsCondition {
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 0);
+    }
+
+    #[test]
+    fn linux_bits_set_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ExtFlags as i32),
+                    ext_flags: Some(FileFinderExtFlagsCondition {
+                        linux_bits_set: Some(111),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::ExtFlagsLinuxBitsSet(bits) => {
+                assert_eq!(*bits, 111);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn linux_bits_unset_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ExtFlags as i32),
+                    ext_flags: Some(FileFinderExtFlagsCondition {
+                        linux_bits_unset: Some(222),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::ExtFlagsLinuxBitsUnset(bits) => {
+                assert_eq!(*bits, 222);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn osx_bits_set_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ExtFlags as i32),
+                    ext_flags: Some(FileFinderExtFlagsCondition {
+                        osx_bits_set: Some(333),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::ExtFlagsOsxBitsSet(bits) => {
+                assert_eq!(*bits, 333);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn osx_bits_unset_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ExtFlags as i32),
+                    ext_flags: Some(FileFinderExtFlagsCondition {
+                        osx_bits_unset: Some(444),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::ExtFlagsOsxBitsUnset(bits) => {
+                assert_eq!(*bits, 444);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn default_contents_regex_match_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ContentsRegexMatch as i32),
+                    contents_regex_match: Some(FileFinderContentsRegexMatchCondition{
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 0);
+    }
+
+    #[test]
+    fn contents_regex_match_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ContentsRegexMatch as i32),
+                    contents_regex_match: Some(FileFinderContentsRegexMatchCondition{
+                        regex: Some(vec![97, 98, 99]),
+                        mode: Some(RegexMatchMode::AllHits as i32),
+                        bytes_before: Some(4),
+                        bytes_after: Some(7),
+                        start_offset: Some(15),
+                        length: Some(42)
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::ContentsRegexMatch(options) => {
+                assert_eq!(options.regex.as_str(), "abc");
+                assert_eq!(options.mode, MatchMode::AllHits);
+                assert_eq!(options.bytes_before, 4);
+                assert_eq!(options.bytes_after, 7);
+                assert_eq!(options.start_offset, 15);
+                assert_eq!(options.length, 42);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
+
+    #[test]
+    fn regex_parse_error_test() {
+        let err = get_parse_error(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ContentsRegexMatch as i32),
+                    contents_regex_match: Some(FileFinderContentsRegexMatchCondition {
+                        regex: Some(vec![255, 255, 255]),
+                        mode: Some(RegexMatchMode::AllHits as i32),
+                        bytes_before: Some(4),
+                        bytes_after: Some(7),
+                        start_offset: Some(15),
+                        length: Some(42)
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        match err {
+            ParseError::RegexParse(error) => {
+                assert_eq!(error.raw_data, vec![255, 255, 255]);
+                assert!(error.error_message.contains("invalid utf-8 sequence"));
+            }
+            e @ _ => panic!("Unexpected error type: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn default_contents_literal_match_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ContentsLiteralMatch as i32),
+                    contents_literal_match: Some(FileFinderContentsLiteralMatchCondition{
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 0);
+    }
+
+    #[test]
+    fn contents_literal_match_condition_test() {
+        let request = get_request(FileFinderArgs {
+            conditions: vec![
+                FileFinderCondition {
+                    condition_type: Some(ConditionType::ContentsLiteralMatch as i32),
+                    contents_literal_match: Some(FileFinderContentsLiteralMatchCondition{
+                        literal: Some(vec![99, 98, 97]),
+                        mode: Some(LiteralMatchMode::AllHits as i32),
+                        start_offset: Some(6),
+                        length: Some(8),
+                        bytes_before: Some(15),
+                        bytes_after: Some(18),
+                        xor_in_key: Some(78),
+                        xor_out_key: Some(98)
+                    }),
+                    ..Default::default()
+                }
+            ],
+            ..Default::default()
+        });
+
+        assert_eq!(request.conditions.len(), 1);
+        match request.conditions.first().unwrap() {
+            Condition::ContentsLiteralMatch(options) => {
+                assert_eq!(options.literal, vec![99, 98, 97]);
+                assert_eq!(options.mode, MatchMode::AllHits);
+                assert_eq!(options.start_offset, 6);
+                assert_eq!(options.length, 8);
+                assert_eq!(options.bytes_before, 15);
+                assert_eq!(options.bytes_after, 18);
+                assert_eq!(options.xor_in_key, 78);
+                assert_eq!(options.xor_out_key, 98);
+            },
+            v @ _ => panic!("Unexpected condition type: {:?}", v)
+        }
+    }
 }
 
-// TODO: finish testing conditions
-// TODO: split action/condition to separate files (this is too big)
 // TODO: put enum stuff somewhere else

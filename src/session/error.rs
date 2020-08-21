@@ -234,8 +234,8 @@ impl From<UnknownEnumValueError> for ParseError {
 
 #[derive(Debug)]
 pub struct RegexParseError {
-    raw_data: Vec<u8>,
-    error_message: String
+    pub raw_data: Vec<u8>,
+    pub error_message: String
 }
 
 impl RegexParseError {
