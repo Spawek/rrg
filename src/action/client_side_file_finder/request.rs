@@ -6,7 +6,7 @@
 //! Defines an internal type for client side file finder action and provides a function converting
 //! proto format of the request (rrg_proto::FileFinderArgs) to the internal format.
 
-use crate::session::{ParseError, RegexParseError, UnknownEnumValueError};
+use crate::session::{ParseError, RegexParseError, parse_enum, ProtoEnum};
 use regex::Regex;
 use rrg_proto::{
     FileFinderAccessTimeCondition, FileFinderAction, FileFinderArgs, FileFinderCondition,
@@ -179,13 +179,6 @@ impl TryFrom<FileFinderDownloadActionOptions> for Action {
     }
 }
 
-trait ProtoEnum<T> {
-    fn default() -> T;
-
-    // Returns value of the enum or None if the input i32 does not describe any know enum value.
-    fn from_i32(val: i32) -> Option<T>;
-}
-
 impl ProtoEnum<PathType> for PathType {
     fn default() -> PathType {
         FileFinderArgs::default().pathtype()
@@ -273,19 +266,6 @@ impl From<LiteralMatchMode> for MatchMode {
             LiteralMatchMode::FirstHit => MatchMode::FirstHit,
             LiteralMatchMode::AllHits => MatchMode::AllHits,
         }
-    }
-}
-
-fn parse_enum<T: ProtoEnum<T>>(raw_enum_value: Option<i32>) -> Result<T, ParseError> {
-    match raw_enum_value {
-        Some(int_value) => match T::from_i32(int_value) {
-            Some(parsed_value) => Ok(parsed_value),
-            None => Err(ParseError::from(UnknownEnumValueError::new(
-                std::any::type_name::<T>(),
-                int_value,
-            ))),
-        },
-        None => Ok(T::default()),
     }
 }
 
@@ -484,19 +464,16 @@ fn get_conditions(proto: FileFinderCondition) -> Result<Vec<Condition>, ParseErr
     let condition_type = parse_enum(proto.condition_type)?;
 
     Ok(match condition_type {
-        ConditionType::ModificationTime => {
-            get_modification_time_conditions(proto.modification_time)
-        }
+        ConditionType::ModificationTime =>
+            get_modification_time_conditions(proto.modification_time),
         ConditionType::AccessTime => get_access_time_conditions(proto.access_time),
         ConditionType::InodeChangeTime => get_inode_change_time_conditions(proto.inode_change_time),
         ConditionType::Size => get_size_conditions(proto.size),
         ConditionType::ExtFlags => get_ext_flags_condition(proto.ext_flags),
-        ConditionType::ContentsRegexMatch => {
-            get_contents_regex_match_condition(proto.contents_regex_match)?
-        }
-        ConditionType::ContentsLiteralMatch => {
+        ConditionType::ContentsRegexMatch =>
+            get_contents_regex_match_condition(proto.contents_regex_match)?,
+        ConditionType::ContentsLiteralMatch =>
             get_contents_literal_match_condition(proto.contents_literal_match)?
-        }
     })
 }
 
@@ -1296,5 +1273,3 @@ mod tests {
         }
     }
 }
-
-// TODO: put enum stuff somewhere else

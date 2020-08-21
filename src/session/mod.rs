@@ -18,6 +18,7 @@ mod demand;
 mod error;
 mod response;
 mod sink;
+mod parse_enum;
 
 use std::convert::TryInto;
 
@@ -29,6 +30,7 @@ pub use self::demand::{Demand, Header, Payload};
 pub use self::error::{Error, ParseError, MissingFieldError, UnknownEnumValueError, RegexParseError};
 use self::response::{Response, Status};
 pub use self::sink::{Sink};
+pub use self::parse_enum::{ProtoEnum, parse_enum};
 
 /// A specialized `Result` type for sessions.
 pub type Result<T> = std::result::Result<T, Error>;
