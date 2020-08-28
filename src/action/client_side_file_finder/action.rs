@@ -6,7 +6,6 @@
 //! TODO: add a comment
 
 use crate::session::{self, Session};
-// use crate::action::Request;
 use rrg_proto::{FileFinderResult, Hash};
 use log::info;
 
@@ -19,9 +18,9 @@ pub struct Response {
 pub fn handle<S: Session>(session: &mut S, request: Request) -> session::Result<()> {
     info!("Received client side file finder request request: {:?}", request);
 
-    // if request.pathtype.is_some() {
-    //     Err("pathtype parameter is not supported!")
-    // }
+    if request.path_type != PathType:: {
+        Err("pathtype parameter is not supported!")
+    }
     //
     // if request.conditions.len() > 0{
     //     Err("conditions parameter is not supported!")
@@ -90,3 +89,5 @@ mod tests {
 
 // TODO: create a dir for this action and do request/response in separate files from the main logic
 // TODO: tests on a real FS
+
+// TODO: support %%code_page%% and others like that
