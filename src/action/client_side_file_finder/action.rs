@@ -5,7 +5,7 @@
 
 //! TODO: add a comment
 
-use crate::session::{self, Session};
+use crate::session::{self, Session, RegexParseError};
 use rrg_proto::{FileFinderResult, Hash};
 use log::info;
 use rrg_proto::path_spec::PathType;
@@ -156,7 +156,7 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
-fn glob_to_regex(pat: &str) -> Regex {
+fn glob_to_regex(pat: &str) -> Result<Regex, RegexParseError> {
     let chars : Vec<char> = pat.chars().collect();
     let mut i : usize = 0;
     let n : usize = chars.len();
@@ -197,7 +197,10 @@ fn glob_to_regex(pat: &str) -> Regex {
         }
     }
 
-    Regex::new(&res).unwrap()  // TODO: handle error
+    match Regex::new(&res) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(RegexParseError::new(res.bytes().collect(), e.to_string())),
+    }
 }
 
 // https://github.com/python/cpython/blob/2.7/Lib/fnmatch.py
