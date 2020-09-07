@@ -257,6 +257,21 @@ impl super::super::Response for Response {
 mod tests {
     // use super::*;
 
+    use crate::action::client_side_file_finder::action::glob_to_regex;
+
+    #[test]
+    fn test_glob_to_regex() {
+        assert_eq!(glob_to_regex("*").unwrap().as_str(), ".*");
+        assert_eq!(glob_to_regex("?").unwrap().as_str(), ".");
+        assert_eq!(glob_to_regex("a?b*").unwrap().as_str(), "a.b.*");
+        assert_eq!(glob_to_regex("[abc]").unwrap().as_str(), r"[abc]");
+        assert_eq!(glob_to_regex("[]]").unwrap().as_str(), r"[]]");
+        assert_eq!(glob_to_regex("[!x]").unwrap().as_str(), r"[^x]");
+        assert_eq!(glob_to_regex("[^x]").unwrap().as_str(), r"[\^x]");
+        assert_eq!(glob_to_regex("[x").unwrap().as_str(), r"\[x");
+        assert_eq!(glob_to_regex("ąźć").unwrap().as_str(), "ąźć");
+    }
+
     #[test]
     fn test() {
         // let mut session = session::test::Fake::new();
