@@ -12,8 +12,6 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
-use regex::Regex;
-use regex;
 
 type Request = crate::action::client_side_file_finder::request::Request;
 
@@ -156,84 +154,6 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
-fn glob_to_regex(pat: &str) -> Result<Regex, RegexParseError> {
-    let chars : Vec<char> = pat.chars().collect();
-    let mut i : usize = 0;
-    let n : usize = chars.len();
-    let mut res = String::new();
-    while i < n {
-        let c = chars[i];
-        i = i + 1;
-        if c == '*' {
-            res = res + ".*";
-        } else if c == '?' {
-            res = res + ".";
-        } else if c == '[' {
-            let mut j = i;
-            if j < n && chars[j] == '!' {
-                j = j + 1;
-            }
-            if j < n && chars[j] == ']' {
-                j = j + 1;
-            }
-            while j < n && chars[j] != ']' {
-                j = j + 1;
-            }
-            if j >= n {
-                res = res + r"\[";
-            } else {
-                let mut stuff = pat[i..j].replace(r"\", r"\\");
-                let stuff_chars : Vec<char> = stuff.chars().collect();
-                i = j + 1;
-                if stuff_chars[0] == '!' {
-                    stuff = String::from("^") + &stuff[1..];
-                } else if stuff_chars[0] == '^' {
-                    stuff = String::from(r"\") + &stuff;
-                }
-                res = format!("{}[{}]", res, stuff);
-            }
-        } else {
-            res = res + &regex::escape(&c.to_string());
-        }
-    }
-
-    match Regex::new(&res) {
-        Ok(v) => Ok(v),
-        Err(e) => Err(RegexParseError::new(res.bytes().collect(), e.to_string())),
-    }
-}
-
-// https://github.com/python/cpython/blob/2.7/Lib/fnmatch.py
-//     i, n = 0, len(pat)
-//     res = ''
-//     while i < n:
-//         c = pat[i]
-//         i = i+1
-//         if c == '*':
-//             res = res + '.*'
-//         elif c == '?':
-//             res = res + '.'
-//         elif c == '[':
-//             j = i
-//             if j < n and pat[j] == '!':
-//                 j = j+1
-//             if j < n and pat[j] == ']':
-//                 j = j+1
-//             while j < n and pat[j] != ']':
-//                 j = j+1
-//             if j >= n:
-//                 res = res + '\\['
-//             else:
-//                 stuff = pat[i:j].replace('\\','\\\\')
-//                 i = j+1
-//                 if stuff[0] == '!':
-//                     stuff = '^' + stuff[1:]
-//                 elif stuff[0] == '^':
-//                     stuff = '\\' + stuff
-//                 res = '%s[%s]' % (res, stuff)
-//         else:
-//             res = res + re.escape(c)
-
 impl super::super::Response for Response {
 
     const RDF_NAME: Option<&'static str> = Some("FileFinderResult");  // ???
@@ -256,21 +176,6 @@ impl super::super::Response for Response {
 #[cfg(test)]
 mod tests {
     // use super::*;
-
-    use crate::action::client_side_file_finder::action::glob_to_regex;
-
-    #[test]
-    fn test_glob_to_regex() {
-        assert_eq!(glob_to_regex("*").unwrap().as_str(), ".*");
-        assert_eq!(glob_to_regex("?").unwrap().as_str(), ".");
-        assert_eq!(glob_to_regex("a?b*").unwrap().as_str(), "a.b.*");
-        assert_eq!(glob_to_regex("[abc]").unwrap().as_str(), r"[abc]");
-        assert_eq!(glob_to_regex("[]]").unwrap().as_str(), r"[]]");
-        assert_eq!(glob_to_regex("[!x]").unwrap().as_str(), r"[^x]");
-        assert_eq!(glob_to_regex("[^x]").unwrap().as_str(), r"[\^x]");
-        assert_eq!(glob_to_regex("[x").unwrap().as_str(), r"\[x");
-        assert_eq!(glob_to_regex("ąźć").unwrap().as_str(), "ąźć");
-    }
 
     #[test]
     fn test() {
@@ -295,5 +200,3 @@ mod tests {
 
 // TODO: create a dir for this action and do request/response in separate files from the main logic
 // TODO: tests on a real FS
-
-// TODO: support %%code_page%% and others like that
