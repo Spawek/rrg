@@ -5,8 +5,7 @@
 
 //! TODO: add a comment
 
-use lazy_static::lazy_static;
-use crate::session::{self, Session, RegexParseError};
+use crate::session::{self, Session};
 use rrg_proto::{FileFinderResult, Hash};
 use log::info;
 use rrg_proto::path_spec::PathType;
@@ -15,8 +14,6 @@ use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
 use crate::action::client_side_file_finder::expand_groups::expand_groups;
 use regex::Regex;
-use regex::internal::Input;
-use std::cmp::max;
 use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 use crate::action::client_side_file_finder::path::{Path, parse_path};
 

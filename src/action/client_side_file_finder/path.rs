@@ -2,6 +2,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 
+#[derive(Debug)]
 pub struct Path {
     components : Vec<PathComponent>
 }
@@ -39,6 +40,8 @@ fn get_path_component(s : &str) -> PathComponent {
 }
 
 fn get_recursive_scan_component(s : &str) -> Option<PathComponent>{
+    const DEFAULT_DEPTH : i32 = 3;
+
     lazy_static!{
         static ref RE : Regex = Regex::new(r"\*\*(?P<max_depth>\d*)").unwrap();
     }
@@ -47,7 +50,7 @@ fn get_recursive_scan_component(s : &str) -> Option<PathComponent>{
         Some(m) => {
             let max_depth = if m["max_depth"].is_empty()
             {
-                3  // TODO: name it somehow
+                DEFAULT_DEPTH
             }
             else {
                 let v = m["max_depth"].parse::<i32>();
@@ -58,7 +61,7 @@ fn get_recursive_scan_component(s : &str) -> Option<PathComponent>{
             };
             Some(PathComponent::RecursiveScan {max_depth})
         }
-        None => None
+        None => {return None;}
     }
 
     // TODO: throw ValueError("malformed recursive component") when there is something more in the match
@@ -98,7 +101,10 @@ fn fold_consecutive_constant_components(components: Vec<PathComponent>) -> Vec<P
     for c in components {
         if !ret.is_empty() && is_constant_component(ret.last().unwrap()) && is_constant_component(&c) {
             let prev_last = ret.swap_remove(ret.len() - 1);
-            ret.push(PathComponent::Constant(get_constant_component_value(&prev_last) + &get_constant_component_value(&c)));
+            ret.push(PathComponent::Constant(
+                get_constant_component_value(&prev_last)
+                + "/"
+                + &get_constant_component_value(&c)));  // TODO: set "/" to proper value
         }
         else {
             ret.push(c);
@@ -115,30 +121,37 @@ mod tests {
     fn assert_constant_component(component: &PathComponent, expected_value: &str){
         match component {
             PathComponent::Constant(c) => {assert_eq!(c, expected_value);},
-            v @ _ => {panic!("expected constant component: {}, got: {:?}", expected_value, component)}
+            _ => {panic!("expected constant component: {}, got: {:?}", expected_value, component)}
         }
     }
 
     fn assert_glob_component(component: &PathComponent, expected_regex: &str){
         match component {
             PathComponent::Glob(regex) => {assert_eq!(regex.as_str(), expected_regex);},
-            v @ _ => {panic!("expected glob component: {}, got: {:?}", expected_regex, component)}
+            _ => {panic!("expected glob component: {}, got: {:?}", expected_regex, component)}
         }
     }
 
-    fn assert_recursive_scan_component(component: &PathComponent, expected_depth: &i32){
+    fn assert_recursive_scan_component(component: &PathComponent, expected_depth: i32){
         match component {
-            PathComponent::RecursiveScan{max_depth} => {assert_eq!(max_depth, expected_depth);},
-            v @ _ => {panic!("expected recursive scan component: {}, got: {:?}", expected_depth, component)}
+            PathComponent::RecursiveScan{max_depth} => {assert_eq!(max_depth, &expected_depth);},
+            _ => {panic!("expected recursive scan component: {}, got: {:?}", expected_depth, component)}
         }
     }
 
     #[test]
-    fn parse_path_test() {
-        let path = parse_path("/home/spawek/**5/??[!qwe]");
-        assert_eq!(path.len(), 3);
-        assert_constant_component(path[0], "/home/spawek");
-        assert_recursive_scan_component(path[1], 5);
-        assert_glob_component(path[2], "..[^qwe]");
+    fn basic_parse_path_test() {
+        let components = parse_path("/home/spawek/**5/??[!qwe]").components;
+        assert_eq!(components.len(), 3);
+        assert_constant_component(&components[0], "home/spawek");
+        assert_recursive_scan_component(&components[1], 5);
+        assert_glob_component(&components[2], "..[^qwe]");
+    }
+
+    #[test]
+    fn default_glob_depth_test() {
+        let components = parse_path("/**").components;
+        assert_eq!(components.len(), 1);
+        assert_recursive_scan_component(&components[0], 3);
     }
 }
