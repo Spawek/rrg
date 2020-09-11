@@ -1,3 +1,8 @@
+// Copyright 2020 Google LLC
+//
+// Use of this source code is governed by an MIT-style license that can be found
+// in the LICENSE file or at https://opensource.org/licenses/MIT.
+
 use regex::Regex;
 use crate::session::RegexParseError;
 
@@ -5,7 +10,7 @@ use crate::session::RegexParseError;
 // E.g. "asd*[!123]??" will be converted into "asd.*[^123]..".
 // This implementation is a Rust port of the cpython code:
 // https://github.com/python/cpython/blob/2.7/Lib/fnmatch.py
-fn glob_to_regex(pat: &str) -> Result<Regex, RegexParseError> {
+pub fn glob_to_regex(pat: &str) -> Result<Regex, RegexParseError> {
     let chars : Vec<char> = pat.chars().collect();
     let mut i : usize = 0;
     let n : usize = chars.len();

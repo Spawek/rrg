@@ -12,7 +12,7 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
-use regex::{Regex};
+use crate::action::client_side_file_finder::expand_groups::expand_groups;
 
 type Request = crate::action::client_side_file_finder::request::Request;
 
@@ -146,7 +146,7 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     // caching can help
 
     let paths : Vec<String> = req.paths.into_iter()
-        .flat_map(|ref x| resolve_paths_alternatives(x))
+        .flat_map(|ref x| expand_groups(x))
         .collect();
 
     // for path in req.paths  // TODO: handle a case when a path is inside another one
@@ -163,52 +163,6 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
-/// Performs group expansion on a given path.
-/// For example, given path `foo/{bar,baz}/{quux,norf}` this method will yield
-///   `foo/bar/quux`, `foo/bar/norf`, `foo/baz/quux`, `foo/baz/norf`.
-///
-/// Differences from GRR:
-/// - support for empty value in the 1st and 2nd alternative e.g.:
-///   - `/{,asd}`, `/{asd,}` are resolved here, but not in GRR
-///   - `/{a,b,}` are resolved both in GRR and in here
-/// - support for a single alternative e.g.:
-///   - `/{asd}` is resolved here, but not in GRR
-fn resolve_paths_alternatives(path: &str) -> Vec<String> {
-    // TODO: make it work somehow
-    // lazy_static! {
-    //     static ref RE = Regex::new(r"{([^}]+(?:,[^}]+)+)}").unwrap();  // TODO: make it static
-    // }
-    let RE = Regex::new(r"\{[^\{]*?\}").unwrap();  // TODO: make it static
-
-    let mut offset = 0;
-    let mut chunks : Vec<Vec<String>> = vec![];
-
-// TODO: handle multiple matches
-    for m in RE.find_iter(path){
-        let split = m.as_str().split(",");
-        chunks.push(vec![path[offset..m.start()].to_owned()]);
-        chunks.push(path[m.start()+1..m.end()-1].split(',').map(|x| x.to_owned()).collect());
-        offset = m.end();
-    }
-    chunks.push(vec![path[offset..].to_owned()]);
-
-    // let x = RE.match(path);
-// TODO: is there any lib to compute product?
-    // let p : Vec<Vec<String>> = chunks.into_iter().product();
-
-    let mut ret = chunks[0].clone();
-    for chunk in chunks.into_iter().skip(1){
-        let mut new_ret = vec![];
-        for prefix in ret {
-            for suffix in &chunk {
-                new_ret.push(prefix.to_owned() + suffix);
-            }
-        }
-        ret = new_ret;
-    }
-
-    ret
-}
 
 impl super::super::Response for Response {
 
@@ -231,17 +185,7 @@ impl super::super::Response for Response {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn resolve_paths_alternatives_test()
-    {
-        assert_eq!(resolve_paths_alternatives("/some/path"), vec!["/some/path"]);
-        assert_eq!(resolve_paths_alternatives("/some/{1,2,3}"), vec!["/some/1", "/some/2", "/some/3"]);
-        assert_eq!(resolve_paths_alternatives("/some/{1,2}/{3,4}"), vec!["/some/1/3", "/some/1/4", "/some/2/3", "/some/2/4"]);
-        assert_eq!(resolve_paths_alternatives("/some/{1,}a/{3,}a"), vec!["/some/1a/3a", "/some/1a/a", "/some/a/3a", "/some/a/a"]);
-        assert_eq!(resolve_paths_alternatives("/some/{123}"), vec!["/some/123"]);
-    }
+    // use super::*;
 
     #[test]
     fn test() {
