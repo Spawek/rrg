@@ -1,0 +1,144 @@
+use lazy_static::lazy_static;
+use regex::Regex;
+use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
+
+pub struct Path {
+    components : Vec<PathComponent>
+}
+
+// Correct Path can't contain 2 consecutive `Constant` components.
+#[derive(Debug)]
+pub enum PathComponent {
+    Constant(String),  // e.g. `/home/spawek/`
+    Glob(Regex),  // converted from glob e.g. `sp*[wek]??`
+    RecursiveScan {max_depth: i32},  // converted from glob recursive component i.e. `**`
+}
+
+pub fn parse_path(path: &str) -> Path {
+    let split : Vec<&str> = path.split("/").collect();  // TODO: support different OS separators
+    let components : Vec<PathComponent> = split.into_iter()
+        .filter(|x| !x.is_empty())
+        .map(get_path_component)
+        .collect();
+
+    Path{components: fold_consecutive_constant_components(components)}
+}
+
+fn get_path_component(s : &str) -> PathComponent {
+    let recursive_scan = get_recursive_scan_component(s);
+    if recursive_scan.is_some(){
+        return recursive_scan.unwrap();
+    }
+
+    let scan = get_scan_component(s);
+    if scan.is_some(){
+        return scan.unwrap();
+    }
+
+    PathComponent::Constant(s.to_owned())
+}
+
+fn get_recursive_scan_component(s : &str) -> Option<PathComponent>{
+    lazy_static!{
+        static ref RE : Regex = Regex::new(r"\*\*(?P<max_depth>\d*)").unwrap();
+    }
+
+    match RE.captures(s){
+        Some(m) => {
+            let max_depth = if m["max_depth"].is_empty()
+            {
+                3  // TODO: name it somehow
+            }
+            else {
+                let v = m["max_depth"].parse::<i32>();
+                if v.is_err(){
+                    return None;  // TODO: throw some error
+                }
+                v.unwrap()
+            };
+            Some(PathComponent::RecursiveScan {max_depth})
+        }
+        None => None
+    }
+
+    // TODO: throw ValueError("malformed recursive component") when there is something more in the match
+}
+
+fn get_scan_component(s : &str) -> Option<PathComponent>{
+    lazy_static!{
+        static ref RE : Regex = Regex::new(r"\*|\?|\[.+\]").unwrap();
+    }
+
+    if !RE.is_match(s){
+        return None;
+    }
+
+    match glob_to_regex(s){
+        Ok(regex) => Some(PathComponent::Glob(regex)),
+        Err(_) => None,  // TODO: handle error case somehow
+    }
+}
+
+fn is_constant_component(component: &PathComponent) -> bool {
+    match component{
+        PathComponent::Constant(_) => true,
+        _ => false
+    }
+}
+
+fn get_constant_component_value(constant_component: &PathComponent) -> String {
+    match constant_component{
+        PathComponent::Constant(s) => s.to_owned(),
+        _ => panic!()
+    }
+}
+
+fn fold_consecutive_constant_components(components: Vec<PathComponent>) -> Vec<PathComponent>{
+    let mut ret = vec![];
+    for c in components {
+        if !ret.is_empty() && is_constant_component(ret.last().unwrap()) && is_constant_component(&c) {
+            let prev_last = ret.swap_remove(ret.len() - 1);
+            ret.push(PathComponent::Constant(get_constant_component_value(&prev_last) + &get_constant_component_value(&c)));
+        }
+        else {
+            ret.push(c);
+        }
+    }
+
+    ret
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_constant_component(component: &PathComponent, expected_value: &str){
+        match component {
+            PathComponent::Constant(c) => {assert_eq!(c, expected_value);},
+            v @ _ => {panic!("expected constant component: {}, got: {:?}", expected_value, component)}
+        }
+    }
+
+    fn assert_glob_component(component: &PathComponent, expected_regex: &str){
+        match component {
+            PathComponent::Glob(regex) => {assert_eq!(regex.as_str(), expected_regex);},
+            v @ _ => {panic!("expected glob component: {}, got: {:?}", expected_regex, component)}
+        }
+    }
+
+    fn assert_recursive_scan_component(component: &PathComponent, expected_depth: &i32){
+        match component {
+            PathComponent::RecursiveScan{max_depth} => {assert_eq!(max_depth, expected_depth);},
+            v @ _ => {panic!("expected recursive scan component: {}, got: {:?}", expected_depth, component)}
+        }
+    }
+
+    #[test]
+    fn parse_path_test() {
+        let path = parse_path("/home/spawek/**5/??[!qwe]");
+        assert_eq!(path.len(), 3);
+        assert_constant_component(path[0], "/home/spawek");
+        assert_recursive_scan_component(path[1], 5);
+        assert_glob_component(path[2], "..[^qwe]");
+    }
+}
