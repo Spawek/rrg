@@ -5,14 +5,14 @@
 
 //! TODO: add a comment
 
-use crate::session::{self, Session, RegexParseError};
+use crate::session::{self, Session};
 use rrg_proto::{FileFinderResult, Hash};
 use log::info;
 use rrg_proto::path_spec::PathType;
 use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
-use regex::{Regex, Captures, Match};
+use regex::{Regex};
 
 type Request = crate::action::client_side_file_finder::request::Request;
 
@@ -163,16 +163,26 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
-// TODO: add UTs
+/// Performs group expansion on a given path.
+/// For example, given path `foo/{bar,baz}/{quux,norf}` this method will yield
+///   `foo/bar/quux`, `foo/bar/norf`, `foo/baz/quux`, `foo/baz/norf`.
+///
+/// Differences from GRR:
+/// - support for empty value in the 1st and 2nd alternative e.g.:
+///   - `/{,asd}`, `/{asd,}` are resolved here, but not in GRR
+///   - `/{a,b,}` are resolved both in GRR and in here
+/// - support for a single alternative e.g.:
+///   - `/{asd}` is resolved here, but not in GRR
 fn resolve_paths_alternatives(path: &str) -> Vec<String> {
     // TODO: make it work somehow
     // lazy_static! {
     //     static ref RE = Regex::new(r"{([^}]+(?:,[^}]+)+)}").unwrap();  // TODO: make it static
     // }
-    let RE = Regex::new(r"\{[^,}]+(?:,[^,}]+)+\}").unwrap();  // TODO: make it static
+    let RE = Regex::new(r"\{[^\{]*?\}").unwrap();  // TODO: make it static
 
     let mut offset = 0;
     let mut chunks : Vec<Vec<String>> = vec![];
+
 // TODO: handle multiple matches
     for m in RE.find_iter(path){
         let split = m.as_str().split(",");
@@ -229,10 +239,8 @@ mod tests {
         assert_eq!(resolve_paths_alternatives("/some/path"), vec!["/some/path"]);
         assert_eq!(resolve_paths_alternatives("/some/{1,2,3}"), vec!["/some/1", "/some/2", "/some/3"]);
         assert_eq!(resolve_paths_alternatives("/some/{1,2}/{3,4}"), vec!["/some/1/3", "/some/1/4", "/some/2/3", "/some/2/4"]);
-
-        // Paths with invalid alternatives are not resolved.
-        assert_eq!(resolve_paths_alternatives("/some/{1,2,}"), vec!["/some/{1,2,}"]);
-        assert_eq!(resolve_paths_alternatives("/some/{,1,2}"), vec!["/some/{,1,2}"]);
+        assert_eq!(resolve_paths_alternatives("/some/{1,}a/{3,}a"), vec!["/some/1a/3a", "/some/1a/a", "/some/a/3a", "/some/a/a"]);
+        assert_eq!(resolve_paths_alternatives("/some/{123}"), vec!["/some/123"]);
     }
 
     #[test]
