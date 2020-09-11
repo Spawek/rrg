@@ -5,7 +5,8 @@
 
 //! TODO: add a comment
 
-use crate::session::{self, Session};
+use lazy_static::lazy_static;
+use crate::session::{self, Session, RegexParseError};
 use rrg_proto::{FileFinderResult, Hash};
 use log::info;
 use rrg_proto::path_spec::PathType;
@@ -13,6 +14,10 @@ use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
 use crate::action::client_side_file_finder::expand_groups::expand_groups;
+use regex::Regex;
+use regex::internal::Input;
+use std::cmp::max;
+use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 
 type Request = crate::action::client_side_file_finder::request::Request;
 
@@ -104,10 +109,7 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     // /home/spawek/rrg/Cargo.[tl]o[cm][lk] -> *toml + *lock
 
     // TODO: path must be absolute
-    // TODO: parent dir is supported?
-    // TODO: `foo/{bar,baz}/{quux,norf}` this method will yield
-    // `foo/bar/quux`, `foo/bar/norf`, `foo/baz/quux`, `foo/baz/norf`.
-    // TODO: can alternatives contain *?
+    // TODO: parent dir is supported? e.g. //asd/asd/../asd
     // TODO: %%user.home%% is implemented on server-side: https://source.corp.google.com/piper///depot/google3/ops/security/grr/core/grr_response_core/lib/interpolation.py - write a comment about it
     // TODO: by default everything is case insensitive
     // TODO: support polish characters
@@ -145,8 +147,9 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     // TODO: it would be nice if 1 dir is not scanned twice in the same search - even if paths are overlapping
     // caching can help
 
-    let paths : Vec<String> = req.paths.into_iter()
+    let paths : Vec<Path> = req.paths.into_iter()
         .flat_map(|ref x| expand_groups(x))
+        .map(|ref x| parse_path(x))
         .collect();
 
     // for path in req.paths  // TODO: handle a case when a path is inside another one
@@ -163,6 +166,103 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
+// Correct Path can't contain 2 consecutive `Constant` components.
+struct Path {
+    components : Vec<PathComponent>
+}
+
+enum PathComponent {
+    Constant(String),  // e.g. `/home/spawek/`
+    Glob(Regex),  // converted from glob e.g. `sp*[wek]??`
+    RecursiveComponent{max_depth: i32},  // converted from glob recursive component i.e. `**`
+}
+
+fn get_recursive_component(s : &str) -> Option<PathComponent>{
+    lazy_static!{
+        static ref RE : Regex = Regex::new(r"\*\*(?P<max_depth>\d*)").unwrap();
+    }
+
+    match RE.captures(s){
+        Some(m) => {
+            let max_depth = m["max_depth"].parse::<i32>();
+            if max_depth.is_err(){
+                return None;  // TODO: throw some error
+            }
+            Some(PathComponent::RecursiveComponent{max_depth: max_depth.unwrap()})
+        }
+        None => None
+    }
+
+    // TODO: throw ValueError("malformed recursive component") when there is something more in the match
+}
+
+fn get_scan_component(s : &str) -> Option<PathComponent>{
+    lazy_static!{
+        static ref RE : Regex = Regex::new(r"\*|\?|\[.+\]").unwrap();
+    }
+
+    if !RE.is_match(s){
+        return None;
+    }
+
+    match glob_to_regex(s){
+        Ok(regex) => Some(PathComponent::Glob(regex)),
+        Err(_) => None,  // TODO: handle error case somehow
+    }
+}
+
+fn get_path_component(s : &str) -> PathComponent {
+    let recursive_component = get_recursive_component(s);
+    if recursive_component.is_some(){
+        return recursive_component.unwrap();
+    }
+
+    let scan = get_scan_component(s);
+    if scan.is_some(){
+        return scan.unwrap();
+    }
+
+    PathComponent::Constant(s.to_owned())
+}
+
+fn is_constant_component(component: &PathComponent) -> bool {
+    match component{
+        PathComponent::Constant(_) => true,
+        _ => false
+    }
+}
+
+fn get_constant_component_value(constant_component: &PathComponent) -> String {
+    match constant_component{
+        PathComponent::Constant(s) => s.to_owned(),
+        _ => panic!()
+    }
+}
+
+fn fold_consecutive_constant_components(components: Vec<PathComponent>) -> Vec<PathComponent>{
+    let mut ret = vec![];
+    for c in components {
+        if !ret.is_empty() && is_constant_component(ret.last().unwrap()) && is_constant_component(&c) {
+            let prev_last = ret.swap_remove(ret.len() - 1);
+            ret.push(PathComponent::Constant(get_constant_component_value(&prev_last) + &get_constant_component_value(&c)));
+        }
+        else {
+            ret.push(c);
+        }
+    }
+
+    ret
+}
+
+fn parse_path(path: &str) -> Path {
+    let split : Vec<&str> = path.split("/").collect();  // TODO: support different OS separators
+    let components : Vec<_> = split.into_iter()
+        .filter(|x| !x.is_empty())
+        .map(get_path_component)
+        .collect();
+
+    Path{components:fold_consecutive_constant_components(f)}
+}
 
 impl super::super::Response for Response {
 
