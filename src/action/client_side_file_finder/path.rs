@@ -8,7 +8,7 @@ pub struct Path {
 }
 
 // Correct Path can't contain 2 consecutive `Constant` components.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PathComponent {
     Constant(String),  // e.g. `/home/spawek/`
     Glob(Regex),  // converted from glob e.g. `sp*[wek]??`
@@ -82,14 +82,14 @@ fn get_scan_component(s : &str) -> Option<PathComponent>{
     }
 }
 
-fn is_constant_component(component: &PathComponent) -> bool {
+pub fn is_constant_component(component: &PathComponent) -> bool {
     match component{
         PathComponent::Constant(_) => true,
         _ => false
     }
 }
 
-fn get_constant_component_value(constant_component: &PathComponent) -> String {
+pub fn get_constant_component_value(constant_component: &PathComponent) -> String {
     match constant_component{
         PathComponent::Constant(s) => s.to_owned(),
         _ => panic!()

@@ -10,7 +10,7 @@ use regex::Regex;
 /// E.g. "asd*[!123]??" will be converted into "asd.*[^123]..".
 /// This implementation is a Rust port of the cpython code:
 /// https://github.com/python/cpython/blob/2.7/Lib/fnmatch.py
-fn glob_to_regex(pat: &str) -> Result<Regex, RegexParseError> {
+pub(crate) fn glob_to_regex(pat: &str) -> Result<Regex, RegexParseError> {
     let chars: Vec<char> = pat.chars().collect();
     let mut i: usize = 0;
     let n: usize = chars.len();

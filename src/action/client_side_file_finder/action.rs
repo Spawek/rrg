@@ -15,8 +15,9 @@ use std::fmt::{Formatter, Display};
 use crate::action::client_side_file_finder::expand_groups::expand_groups;
 use regex::Regex;
 use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
-use crate::action::client_side_file_finder::path::{Path, parse_path};
+use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent};
 use super::request::*;
+use std::fs;
 
 #[derive(Debug)]
 pub struct Response {
@@ -166,21 +167,80 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
-fn resolve_paths(paths : Vec<Path>) -> Vec<Paths> {
-    paths.flat_map(resolve_path)
+fn resolve_paths(paths : Vec<Path>) -> Vec<FsObject> {
+    paths.into_iter().flat_map(resolve_path).collect()
 }
 
-fn is_path_constant(path: Path) -> bool {
-    if path.components
+fn is_path_constant(path: &Path) -> bool {
+    if path.components.len() != 1 {
+        return false;
+    }
+
+    match path.components.first().unwrap() {
+        PathComponent::Constant(_) => true,
+        _ => false
+    }
 }
 
-fn resolve_path(path: Path) -> Vec<Paths> {
-    let tasks = vec![path];
-    let results = vec![path];
+enum FsObjectType
+{
+    Dir,
+    File  // for now everything that is not a Dir is a file
 }
 
-fn partially_resolve_path(path: Path) -> Vec<Paths> {
+struct FsObject
+{
+    object_type: FsObjectType,
+    path: String
+}
 
+fn get_objects_in_path(path: String) -> Vec<FsObject>
+{
+    let path = std::path::Path::new(&path);
+    if !std::path::Path::is_dir(path) {
+        return vec![
+            FsObject{
+                path: path.to_str().unwrap().to_owned() /* UNSAFE CALL HERE! */,
+                object_type: FsObjectType::File
+            }];
+    }
+
+    for entry in fs::read_dir(path){
+        // let p = entry.path();
+    }
+
+    vec![]
+}
+
+fn resolve_path(path: Path) -> Vec<FsObject> {
+    let mut tasks = vec![path];
+    let results = vec![];
+
+    while !tasks.is_empty() {
+        let task = tasks.swap_remove(tasks.len() - 1);
+
+        // Scan components until getting non-const component or
+        // reaching the end of the path.
+        let mut const_part = PathComponent::Constant("".to_owned());
+        let mut non_const_component : Option<PathComponent> = None;
+        for component in &task.components {
+            match component{
+                v @ PathComponent::Constant(_) => {
+                    const_part = v.clone()
+                },
+                v @ PathComponent::Glob(_) => {
+                    non_const_component = Some(v.clone());
+                    break;
+                },
+                v@ PathComponent::RecursiveScan { .. } => {
+                    non_const_component = Some(v.clone());
+                    break;
+                },
+            }
+        };
+    }
+
+    results
 }
 
 
