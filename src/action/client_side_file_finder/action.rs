@@ -16,8 +16,7 @@ use crate::action::client_side_file_finder::expand_groups::expand_groups;
 use regex::Regex;
 use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 use crate::action::client_side_file_finder::path::{Path, parse_path};
-
-type Request = crate::action::client_side_file_finder::request::Request;
+use super::request::*;
 
 #[derive(Debug)]
 pub struct Response {
@@ -150,6 +149,10 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
         .map(|ref x| parse_path(x))
         .collect();
 
+    println!("paths: {:?}", paths);
+
+    let resolved_paths = resolve_paths(paths);
+
     // for path in req.paths  // TODO: handle a case when a path is inside another one
     // {
     //     let dir = std::fs::read_dir(path);
@@ -159,11 +162,26 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     //     dir.unwrap().map(|res| res.map(|e| e))
     // }
 
-
     session.reply(Response {})?;
     Ok(())
 }
 
+fn resolve_paths(paths : Vec<Path>) -> Vec<Paths> {
+    paths.flat_map(resolve_path)
+}
+
+fn is_path_constant(path: Path) -> bool {
+    if path.components
+}
+
+fn resolve_path(path: Path) -> Vec<Paths> {
+    let tasks = vec![path];
+    let results = vec![path];
+}
+
+fn partially_resolve_path(path: Path) -> Vec<Paths> {
+
+}
 
 
 impl super::super::Response for Response {
@@ -187,15 +205,27 @@ impl super::super::Response for Response {
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
-
+    use super::*;
+    use crate::session::Error;
 
     #[test]
     fn test() {
-        // let mut session = session::test::Fake::new();
-        // let request = Request2{paths: vec!("SOME_PATH".to_owned()), action: Some(Action::Stat{})};
-        // assert!(handle(&mut session, request).is_ok());
-        //
+        let mut session = session::test::Fake::new();
+        let request = Request{
+            paths: vec!("/home/spawek/grr/**/*toml".to_owned()),
+            path_type: PathType::Os,
+            action: Some(Action::Stat(StatActionOptions { resolve_links: false, collect_ext_attrs: false } )),
+            conditions: vec![],
+            process_non_regular_files: false,
+            follow_links: false,
+            xdev_mode: XDev::Local
+        };
+
+        match handle(&mut session, request) {
+            Ok(_) => {},
+            Err(err) => {panic!("handle error: {}", err)},
+        }
+
         // let args : FileFinderArgs = FileFinderArgs{
         //     action: Some(rrg_proto::FileFinderAction{
         //         // action_type: Some(2),
@@ -206,10 +236,13 @@ mod tests {
         //
         // let req = Request2::from_proto(args);
         // println!("req: {:?}", req);
-
+        //
         // assert_eq!(session.reply_count(), 1);
     }
 }
 
 // TODO: create a dir for this action and do request/response in separate files from the main logic
 // TODO: tests on a real FS
+
+// TODO: GRR bug: /home/spawek/rrg/**/*toml doesn't find /home/spawek/rrg/Cargo.toml
+// TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml

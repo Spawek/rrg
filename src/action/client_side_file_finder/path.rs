@@ -4,7 +4,7 @@ use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 
 #[derive(Debug)]
 pub struct Path {
-    components : Vec<PathComponent>
+    pub components : Vec<PathComponent>
 }
 
 // Correct Path can't contain 2 consecutive `Constant` components.
