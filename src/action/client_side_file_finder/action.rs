@@ -13,9 +13,7 @@ use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
 use crate::action::client_side_file_finder::expand_groups::expand_groups;
-use regex::Regex;
-use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
-use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent};
+use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent, get_constant_component_value, fold_consecutive_constant_components};
 use super::request::*;
 use std::fs;
 
@@ -152,7 +150,8 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
 
     println!("paths: {:?}", paths);
 
-    let resolved_paths = resolve_paths(paths);
+    let resolved_paths = resolve_paths(&paths);
+    println!("resolved paths: {:?} to: {:?}", &paths, &resolved_paths);
 
     // for path in req.paths  // TODO: handle a case when a path is inside another one
     // {
@@ -167,7 +166,7 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
-fn resolve_paths(paths : Vec<Path>) -> Vec<FsObject> {
+fn resolve_paths(paths : &Vec<Path>) -> Vec<FsObject> {
     paths.into_iter().flat_map(resolve_path).collect()
 }
 
@@ -182,21 +181,23 @@ fn is_path_constant(path: &Path) -> bool {
     }
 }
 
+#[derive(Debug)]
 enum FsObjectType
 {
     Dir,
     File  // for now everything that is not a Dir is a file
 }
 
+#[derive(Debug)]
 struct FsObject
 {
     object_type: FsObjectType,
     path: String
 }
 
-fn get_objects_in_path(path: String) -> Vec<FsObject>
+fn get_objects_in_path(path: &str) -> Vec<FsObject>
 {
-    let path = std::path::Path::new(&path);
+    let path = std::path::Path::new(path);
     if !std::path::Path::is_dir(path) {
         return vec![
             FsObject{
@@ -205,39 +206,100 @@ fn get_objects_in_path(path: String) -> Vec<FsObject>
             }];
     }
 
-    for entry in fs::read_dir(path){
-        // let p = entry.path();
+    let mut ret = vec![];
+    for read in fs::read_dir(path){
+        for entry in read {
+            let entry = entry.unwrap();  // UNSAFE CALL
+            let entry_type = if entry.file_type().unwrap().is_dir(){
+                FsObjectType::Dir
+            }
+            else {
+                FsObjectType::File
+            };
+            ret.push(FsObject{
+                path: entry.path().to_str().unwrap().to_owned(),
+                object_type: entry_type
+            });
+        }
     }
 
-    vec![]
+    ret
 }
 
-fn resolve_path(path: Path) -> Vec<FsObject> {
-    let mut tasks = vec![path];
-    let results = vec![];
+fn resolve_path(path: &Path) -> Vec<FsObject> {
+    let mut tasks = vec![path.clone()];
+    let mut results = vec![];
 
     while !tasks.is_empty() {
         let task = tasks.swap_remove(tasks.len() - 1);
+        println!("Working on task: {:?}", &task);
 
         // Scan components until getting non-const component or
         // reaching the end of the path.
         let mut const_part = PathComponent::Constant("".to_owned());
         let mut non_const_component : Option<PathComponent> = None;
-        for component in &task.components {
+        let mut remaining_components = vec![];
+        for i in 0..task.components.len(){
+        // for component in &task.components {
+            let component = task.components.get(i).unwrap();
             match component{
                 v @ PathComponent::Constant(_) => {
                     const_part = v.clone()
                 },
                 v @ PathComponent::Glob(_) => {
                     non_const_component = Some(v.clone());
+                    remaining_components = task.components[i+1..].into_iter().collect();
                     break;
                 },
                 v@ PathComponent::RecursiveScan { .. } => {
                     non_const_component = Some(v.clone());
+                    remaining_components = task.components[i+1..].into_iter().collect();
                     break;
                 },
             }
         };
+
+        println!("working for const part {:?} and non-const part {:?}", const_part, non_const_component);
+        let path = get_constant_component_value(&const_part);
+        let mut objects = get_objects_in_path(&path);
+        for o in objects{
+            match non_const_component{
+                None => { results.push(o); },
+                Some(ref c) => {
+                    match c {
+                        PathComponent::Constant(_) => {panic!()},
+                        PathComponent::Glob(regex) => {
+                            let relative_path = std::path::Path::strip_prefix(
+                                std::path::Path::new(&o.path),
+                                get_constant_component_value(&const_part))
+                                .unwrap().to_str().unwrap();
+
+                            if regex.is_match(relative_path) {
+                                println!("candidate: {}, relative path: {}, accepted by regex: {}", &o.path, &relative_path, regex.as_str());
+
+                                if remaining_components.is_empty() {
+                                    results.push(o);
+                                }
+                                else {
+                                    let mut new_task_components = vec![];
+                                    // let remaining_components = remaining_components.clone();
+                                    new_task_components.push(const_part.clone());
+                                    new_task_components.push(PathComponent::Constant(relative_path.to_owned()));
+                                    for x in remaining_components.clone(){
+                                        new_task_components.push(x.clone());
+                                    }
+                                    tasks.push(Path{components: fold_consecutive_constant_components(new_task_components)});
+                                }
+                            }
+                            else {
+                                // println!("candidate: {} removed by regex: {}", &o.path, regex.as_str());
+                            }
+                        },
+                        PathComponent::RecursiveScan { max_depth } => { panic!("not implemented!")},
+                    }
+                },
+            }
+        }
     }
 
     results
@@ -266,13 +328,13 @@ impl super::super::Response for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::Error;
 
     #[test]
     fn test() {
         let mut session = session::test::Fake::new();
         let request = Request{
-            paths: vec!("/home/spawek/grr/**/*toml".to_owned()),
+            paths: vec!("/home/spaw*/rrg/*toml".to_owned()),
+            // paths: vec!("/home/spawek/rrg/**/*toml".to_owned()),
             path_type: PathType::Os,
             action: Some(Action::Stat(StatActionOptions { resolve_links: false, collect_ext_attrs: false } )),
             conditions: vec![],

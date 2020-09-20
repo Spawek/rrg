@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Path {
     pub components : Vec<PathComponent>
 }
@@ -16,13 +16,19 @@ pub enum PathComponent {
 }
 
 pub fn parse_path(path: &str) -> Path {
+    if !path.starts_with(&"/") {
+        panic!("path must be absolute");  // TODO: throw a meaningful error
+    }
     let split : Vec<&str> = path.split("/").collect();  // TODO: support different OS separators
-    let components : Vec<PathComponent> = split.into_iter()
+    let mut components : Vec<PathComponent> = split.into_iter()
         .filter(|x| !x.is_empty())
         .map(get_path_component)
         .collect();
 
-    Path{components: fold_consecutive_constant_components(components)}
+    components.insert(0, PathComponent::Constant("".to_owned())); // will add "/" at the beginning
+    let components = fold_consecutive_constant_components(components);
+
+    Path{components}
 }
 
 fn get_path_component(s : &str) -> PathComponent {
@@ -96,7 +102,7 @@ pub fn get_constant_component_value(constant_component: &PathComponent) -> Strin
     }
 }
 
-fn fold_consecutive_constant_components(components: Vec<PathComponent>) -> Vec<PathComponent>{
+pub fn fold_consecutive_constant_components(components: Vec<PathComponent>) -> Vec<PathComponent>{
     let mut ret = vec![];
     for c in components {
         if !ret.is_empty() && is_constant_component(ret.last().unwrap()) && is_constant_component(&c) {
@@ -143,7 +149,7 @@ mod tests {
     fn basic_parse_path_test() {
         let components = parse_path("/home/spawek/**5/??[!qwe]").components;
         assert_eq!(components.len(), 3);
-        assert_constant_component(&components[0], "home/spawek");
+        assert_constant_component(&components[0], "/home/spawek");
         assert_recursive_scan_component(&components[1], 5);
         assert_glob_component(&components[2], "..[^qwe]");
     }
