@@ -282,7 +282,6 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                                 }
                                 else {
                                     let mut new_task_components = vec![];
-                                    // let remaining_components = remaining_components.clone();
                                     new_task_components.push(const_part.clone());
                                     new_task_components.push(PathComponent::Constant(relative_path.to_owned()));
                                     for x in remaining_components.clone(){
@@ -295,7 +294,22 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                                 // println!("candidate: {} removed by regex: {}", &o.path, regex.as_str());
                             }
                         },
-                        PathComponent::RecursiveScan { max_depth } => { panic!("not implemented!")},
+                        PathComponent::RecursiveScan { max_depth } => {
+                            if max_depth == &0 && remaining_components.is_empty() {
+                                results.push(o);
+                            }
+                            else {
+                                let mut new_task_components = vec![];
+                                new_task_components.push(PathComponent::Constant(o.path));
+                                if max_depth > &0 {
+                                    new_task_components.push(PathComponent::RecursiveScan {max_depth: max_depth - 1});
+                                }
+                                for x in remaining_components.clone(){
+                                    new_task_components.push(x.clone());
+                                }
+                                tasks.push(Path{components: fold_consecutive_constant_components(new_task_components)});
+                            }
+                        },
                     }
                 },
             }
@@ -333,8 +347,8 @@ mod tests {
     fn test() {
         let mut session = session::test::Fake::new();
         let request = Request{
-            paths: vec!("/home/spaw*/rrg/*toml".to_owned()),
-            // paths: vec!("/home/spawek/rrg/**/*toml".to_owned()),
+            // paths: vec!("/home/spaw*/rrg/*toml".to_owned()),
+            paths: vec!("/home/spaw*/rrg/**1/*toml".to_owned()),
             path_type: PathType::Os,
             action: Some(Action::Stat(StatActionOptions { resolve_links: false, collect_ext_attrs: false } )),
             conditions: vec![],
