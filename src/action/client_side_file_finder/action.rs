@@ -181,14 +181,14 @@ fn is_path_constant(path: &Path) -> bool {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum FsObjectType
 {
     Dir,
     File  // for now everything that is not a Dir is a file
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct FsObject
 {
     object_type: FsObjectType,
@@ -262,45 +262,53 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
         // println!("working for const part {:?} and non-const part {:?}", const_part, non_const_component);
         let path = get_constant_component_value(&const_part);
         let mut objects = get_objects_in_path(&path);
-        for o in objects{
-            match non_const_component{
-                None => { results.push(o); },
-                Some(ref c) => {
-                    match c {
-                        PathComponent::Constant(_) => {panic!()},
-                        PathComponent::Glob(regex) => {
+        match non_const_component {
+            None => {
+                for o in &objects {
+                    results.push(o.clone());
+                }
+            },
+            Some(ref c) => {
+                match c {
+                    PathComponent::Constant(_) => { panic!() },
+                    PathComponent::Glob(regex) => {
+                        for o in &objects {
                             let relative_path = std::path::Path::strip_prefix(
                                 std::path::Path::new(&o.path),
                                 get_constant_component_value(&const_part))
                                 .unwrap().to_str().unwrap();
 
                             if regex.is_match(relative_path) {
-                                println!("candidate: {}, relative path: {}, accepted by regex: {}", &o.path, &relative_path, regex.as_str());
-
                                 if remaining_components.is_empty() {
-                                    println!("NEW RESULT: {:?}", &o);
-                                    results.push(o);
-                                }
-                                else {
+                                    results.push(o.clone());
+                                } else {
                                     let mut new_task_components = vec![];
                                     new_task_components.push(const_part.clone());
                                     new_task_components.push(
                                         PathComponent::Constant(relative_path.to_owned()));
-                                    for x in remaining_components.clone(){
+                                    for x in remaining_components.clone() {
                                         new_task_components.push(x.clone());
                                     }
-                                    tasks.push(Path{
-                                        components: fold_consecutive_constant_components(new_task_components)});
+                                    tasks.push(Path {
+                                        components: fold_consecutive_constant_components(new_task_components)
+                                    });
                                 }
                             }
-                            else {
-                                // println!("candidate: {} removed by regex: {}", &o.path, regex.as_str());
-                            }
-                        },
-                        PathComponent::RecursiveScan { max_depth } => {
+                        }
+                    },
+                    PathComponent::RecursiveScan { max_depth } => {
+                        let mut current_dir_task_components = vec![];
+                        current_dir_task_components.push(PathComponent::Constant(path.clone()));
+                        for x in remaining_components.clone() {
+                            current_dir_task_components.push(x.clone());
+                        }
+                        tasks.push(Path { components: fold_consecutive_constant_components(current_dir_task_components) });
+                        println!("pushed new task: {:?}", tasks.last());
+
+                        for o in &objects {
                             if o.object_type == FsObjectType::Dir {
                                 let mut new_task_components = vec![];
-                                new_task_components.push(PathComponent::Constant(o.path));
+                                new_task_components.push(PathComponent::Constant(o.path.clone()));
                                 if max_depth > &1 {
                                     new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
                                 }
@@ -310,10 +318,10 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                                 tasks.push(Path { components: fold_consecutive_constant_components(new_task_components) });
                                 println!("pushed new task: {:?}", tasks.last());
                             }
-                        },
-                    }
-                },
-            }
+                        }
+                    },
+                }
+            },
         }
 
         println!("--> finished task");
@@ -350,7 +358,6 @@ mod tests {
     fn test() {
         let mut session = session::test::Fake::new();
         let request = Request{
-            // paths: vec!("/home/spaw*/rrg/*toml".to_owned()),
             paths: vec!("/home/spaw*/rrg/**1/*toml".to_owned()),
             path_type: PathType::Os,
             action: Some(Action::Stat(StatActionOptions { resolve_links: false, collect_ext_attrs: false } )),
