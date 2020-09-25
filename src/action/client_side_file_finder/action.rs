@@ -13,7 +13,7 @@ use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
 use crate::action::client_side_file_finder::expand_groups::expand_groups;
-use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent, get_constant_component_value, fold_consecutive_constant_components};
+use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent, fold_constant_components};
 use super::request::*;
 use std::fs;
 
@@ -236,15 +236,14 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
 
         // Scan components until getting non-const component or
         // reaching the end of the path.
-        let mut const_part = PathComponent::Constant("".to_owned());
+        let mut prefix = "".to_owned();
         let mut non_const_component : Option<PathComponent> = None;
         let mut remaining_components = vec![];
         for i in 0..task.components.len(){
-        // for component in &task.components {
             let component = task.components.get(i).unwrap();
             match component{
-                v @ PathComponent::Constant(_) => {
-                    const_part = v.clone()
+                PathComponent::Constant(c) => {
+                    prefix = c.to_owned();
                 },
                 v @ PathComponent::Glob(_) => {
                     non_const_component = Some(v.clone());
@@ -259,9 +258,7 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
             }
         };
 
-        // println!("working for const part {:?} and non-const part {:?}", const_part, non_const_component);
-        let path = get_constant_component_value(&const_part);
-        let mut objects = get_objects_in_path(&path);
+        let mut objects = get_objects_in_path(&prefix);
         match non_const_component {
             None => {
                 for o in &objects {
@@ -275,7 +272,7 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                         for o in &objects {
                             let relative_path = std::path::Path::strip_prefix(
                                 std::path::Path::new(&o.path),
-                                get_constant_component_value(&const_part))
+                                &prefix)
                                 .unwrap().to_str().unwrap();
 
                             if regex.is_match(relative_path) {
@@ -283,14 +280,14 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                                     results.push(o.clone());
                                 } else {
                                     let mut new_task_components = vec![];
-                                    new_task_components.push(const_part.clone());
+                                    new_task_components.push(PathComponent::Constant(prefix.clone()));
                                     new_task_components.push(
                                         PathComponent::Constant(relative_path.to_owned()));
                                     for x in remaining_components.clone() {
                                         new_task_components.push(x.clone());
                                     }
                                     tasks.push(Path {
-                                        components: fold_consecutive_constant_components(new_task_components)
+                                        components: fold_constant_components(new_task_components)
                                     });
                                 }
                             }
@@ -298,11 +295,11 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                     },
                     PathComponent::RecursiveScan { max_depth } => {
                         let mut current_dir_task_components = vec![];
-                        current_dir_task_components.push(PathComponent::Constant(path.clone()));
+                        current_dir_task_components.push(PathComponent::Constant(prefix.clone()));
                         for x in remaining_components.clone() {
                             current_dir_task_components.push(x.clone());
                         }
-                        tasks.push(Path { components: fold_consecutive_constant_components(current_dir_task_components) });
+                        tasks.push(Path { components: fold_constant_components(current_dir_task_components) });
                         println!("pushed new task: {:?}", tasks.last());
 
                         for o in &objects {
@@ -315,7 +312,7 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                                 for x in remaining_components.clone() {
                                     new_task_components.push(x.clone());
                                 }
-                                tasks.push(Path { components: fold_consecutive_constant_components(new_task_components) });
+                                tasks.push(Path { components: fold_constant_components(new_task_components) });
                                 println!("pushed new task: {:?}", tasks.last());
                             }
                         }

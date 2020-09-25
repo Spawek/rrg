@@ -26,7 +26,7 @@ pub fn parse_path(path: &str) -> Path {
         .collect();
 
     components.insert(0, PathComponent::Constant("".to_owned())); // will add "/" at the beginning
-    let components = fold_consecutive_constant_components(components);
+    let components = fold_constant_components(components);
 
     Path{components}
 }
@@ -102,7 +102,7 @@ pub fn get_constant_component_value(constant_component: &PathComponent) -> Strin
     }
 }
 
-pub fn fold_consecutive_constant_components(components: Vec<PathComponent>) -> Vec<PathComponent>{
+pub fn fold_constant_components(components: Vec<PathComponent>) -> Vec<PathComponent>{
     let mut ret = vec![];
     for c in components {
         if !ret.is_empty() && is_constant_component(ret.last().unwrap()) && is_constant_component(&c) {
