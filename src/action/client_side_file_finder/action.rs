@@ -181,7 +181,7 @@ fn is_path_constant(path: &Path) -> bool {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum FsObjectType
 {
     Dir,
@@ -232,7 +232,7 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
 
     while !tasks.is_empty() {
         let task = tasks.swap_remove(tasks.len() - 1);
-        println!("Working on task: {:?}", &task);
+        println!("--> Working on task: {:?}", &task);
 
         // Scan components until getting non-const component or
         // reaching the end of the path.
@@ -259,7 +259,7 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
             }
         };
 
-        println!("working for const part {:?} and non-const part {:?}", const_part, non_const_component);
+        // println!("working for const part {:?} and non-const part {:?}", const_part, non_const_component);
         let path = get_constant_component_value(&const_part);
         let mut objects = get_objects_in_path(&path);
         for o in objects{
@@ -278,16 +278,19 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                                 println!("candidate: {}, relative path: {}, accepted by regex: {}", &o.path, &relative_path, regex.as_str());
 
                                 if remaining_components.is_empty() {
+                                    println!("NEW RESULT: {:?}", &o);
                                     results.push(o);
                                 }
                                 else {
                                     let mut new_task_components = vec![];
                                     new_task_components.push(const_part.clone());
-                                    new_task_components.push(PathComponent::Constant(relative_path.to_owned()));
+                                    new_task_components.push(
+                                        PathComponent::Constant(relative_path.to_owned()));
                                     for x in remaining_components.clone(){
                                         new_task_components.push(x.clone());
                                     }
-                                    tasks.push(Path{components: fold_consecutive_constant_components(new_task_components)});
+                                    tasks.push(Path{
+                                        components: fold_consecutive_constant_components(new_task_components)});
                                 }
                             }
                             else {
@@ -295,25 +298,25 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                             }
                         },
                         PathComponent::RecursiveScan { max_depth } => {
-                            if max_depth == &0 && remaining_components.is_empty() {
-                                results.push(o);
-                            }
-                            else {
+                            if o.object_type == FsObjectType::Dir {
                                 let mut new_task_components = vec![];
                                 new_task_components.push(PathComponent::Constant(o.path));
-                                if max_depth > &0 {
-                                    new_task_components.push(PathComponent::RecursiveScan {max_depth: max_depth - 1});
+                                if max_depth > &1 {
+                                    new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
                                 }
-                                for x in remaining_components.clone(){
+                                for x in remaining_components.clone() {
                                     new_task_components.push(x.clone());
                                 }
-                                tasks.push(Path{components: fold_consecutive_constant_components(new_task_components)});
+                                tasks.push(Path { components: fold_consecutive_constant_components(new_task_components) });
+                                println!("pushed new task: {:?}", tasks.last());
                             }
                         },
                     }
                 },
             }
         }
+
+        println!("--> finished task");
     }
 
     results
