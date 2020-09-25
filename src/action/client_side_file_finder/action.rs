@@ -16,6 +16,7 @@ use crate::action::client_side_file_finder::expand_groups::expand_groups;
 use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent, fold_constant_components};
 use super::request::*;
 use std::fs;
+use regex::Regex;
 
 #[derive(Debug)]
 pub struct Response {
@@ -269,6 +270,41 @@ fn get_task_details(task: &Path) -> TaskDetails {
     TaskDetails { path_prefix, current_component, remaining_components }
 }
 
+struct TaskResults {
+    new_tasks: Vec<Path>,
+    objects: Vec<FsObject>, // TODO: poor naming - maybe `outputs`? + make it consistent across the code
+}
+
+fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
+    let mut new_tasks = vec![];
+    let mut results = vec![];
+    for o in get_objects_in_path(&task_details.path_prefix) {
+        let relative_path = std::path::Path::strip_prefix(
+            std::path::Path::new(&o.path),
+            &task_details.path_prefix).unwrap().to_str().unwrap();
+
+        if regex.is_match(relative_path) {
+            if task_details.remaining_components.is_empty() {
+                results.push(o.clone());
+            } else {
+                let mut new_task_components = vec![];
+                new_task_components.push(
+                    PathComponent::Constant(task_details.path_prefix.clone()));
+                new_task_components.push(
+                    PathComponent::Constant(relative_path.to_owned()));
+                for x in task_details.remaining_components.clone() {
+                    new_task_components.push(x.clone());
+                }
+                new_tasks.push(Path {
+                    components: fold_constant_components(new_task_components)
+                });
+            }
+        }
+    }
+
+    TaskResults{ new_tasks, objects: results }
+}
+
 fn resolve_path(path: &Path) -> Vec<FsObject> {
     let mut tasks = vec![path.clone()];
     let mut results = vec![];
@@ -277,41 +313,21 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
         let task = tasks.swap_remove(tasks.len() - 1);
         println!("--> Working on task: {:?}", &task);
 
+        // TODO: maybe change it, so current_component can be a const (so it can't be none)
         let task_details = get_task_details(&task);
-        let mut objects = get_objects_in_path(&task_details.path_prefix);
-        match task_details.current_component {
+        match &task_details.current_component {
             None => {
-                for o in &objects {
-                    results.push(o.clone());
+                for o in get_objects_in_path(&task_details.path_prefix) {
+                    results.push(o);
                 }
             },
             Some(component) => {
                 match component {
                     PathComponent::Constant(_) => { panic!() },
-                    PathComponent::Glob(regex) => {
-                        for o in &objects {
-                            let relative_path = std::path::Path::strip_prefix(
-                                std::path::Path::new(&o.path),
-                                &task_details.path_prefix).unwrap().to_str().unwrap();
-
-                            if regex.is_match(relative_path) {
-                                if task_details.remaining_components.is_empty() {
-                                    results.push(o.clone());
-                                } else {
-                                    let mut new_task_components = vec![];
-                                    new_task_components.push(
-                                        PathComponent::Constant(task_details.path_prefix.clone()));
-                                    new_task_components.push(
-                                        PathComponent::Constant(relative_path.to_owned()));
-                                    for x in task_details.remaining_components.clone() {
-                                        new_task_components.push(x.clone());
-                                    }
-                                    tasks.push(Path {
-                                        components: fold_constant_components(new_task_components)
-                                    });
-                                }
-                            }
-                        }
+                    PathComponent::Glob(ref regex) => {
+                        let mut task_results = execute_glob_task(regex, &task_details);
+                        tasks.append(&mut task_results.new_tasks);
+                        results.append(&mut task_results.objects);
                     },
                     PathComponent::RecursiveScan { max_depth } => {
                         let mut current_dir_task_components = vec![];
@@ -323,11 +339,11 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
                         tasks.push(Path { components: fold_constant_components(current_dir_task_components) });
                         println!("pushed new task: {:?}", tasks.last());
 
-                        for o in &objects {
+                        for o in get_objects_in_path(&task_details.path_prefix) {
                             if o.object_type == FsObjectType::Dir {
                                 let mut new_task_components = vec![];
                                 new_task_components.push(PathComponent::Constant(o.path.clone()));
-                                if max_depth > 1 {
+                                if max_depth > &1 {
                                     new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
                                 }
                                 for x in task_details.remaining_components.clone() {
