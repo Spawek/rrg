@@ -224,52 +224,65 @@ fn get_objects_in_path(path: &str) -> Vec<FsObject>
         }
     }
 
+    println!("FS scan of: {:?} results: {:?}", &path, &ret);
+
     ret
 }
 
 /// Task split to parts making the execution simpler.
+#[derive(Debug)]
 struct TaskDetails {
-    /// Constant path to be scanned.
+    /// Path prefix in which scope the task must be executed.
     /// Given example task: `/a/b/**4/c/d*` this part would be `/a/b`.
+    /// Given example task: `/a/b/c` this part would be empty.
     path_prefix: String,
 
-    /// Current non-const `PathComponent` to be executed.
+    /// Current `PathComponent` to be executed.
     /// Given example task: `/a/b/**4/c/d*` this part would be `/**4`.
-    current_component : Option<PathComponent>,
+    /// Given example task: `/a/b/c` this part would be `/a/b/c`.
+    current_component : PathComponent,
 
     /// Remaining path components to be executed in following tasks.
     /// Given example task: `/a/b/**4/c/d*` this part would be `c/d*`.
+    /// Given example task: `/a/b/c` this part would be empty.
     remaining_components : Vec<PathComponent>,
 }
 
 fn get_task_details(task: &Path) -> TaskDetails {
+    let folded_components = fold_constant_components(&task.components);
+    println!("folded components: {:?}", folded_components);
+
     // Scan components until getting non-const component or
     // reaching the end of the path.
     let mut path_prefix = "".to_owned();
-    let mut current_component: Option<PathComponent> = None;
-    let mut remaining_components = vec![];
-    for i in 0..task.components.len(){
-        let component = task.components.get(i).unwrap();
+    for i in 0..folded_components.len(){
+        let component = folded_components.get(i).unwrap();
         match component{
             PathComponent::Constant(c) => {
                 path_prefix = c.to_owned();
             },
             v @ PathComponent::Glob(_) => {
-                current_component = Some(v.clone());
-                remaining_components = task.components[i+1..].into_iter().map(|x| x.to_owned()).collect();
-                break;
+                let remaining_components = folded_components[i+1..]
+                    .into_iter().map(|x| x.to_owned()).collect();
+                return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
             },
-            v@ PathComponent::RecursiveScan { .. } => {
-                current_component = Some(v.clone());
-                remaining_components = task.components[i+1..].into_iter().map(|x| x.to_owned()).collect();
-                break;
+            v @ PathComponent::RecursiveScan { .. } => {
+                let remaining_components = folded_components[i+1..]
+                    .into_iter().map(|x| x.to_owned()).collect();
+                return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
+
             },
         }
     }
 
-    TaskDetails { path_prefix, current_component, remaining_components }
+    TaskDetails {
+        path_prefix: "".to_owned(),
+        current_component: PathComponent::Constant(path_prefix.to_owned()),
+        remaining_components: vec![]
+    }
 }
 
+#[derive(Debug)]
 struct TaskResults {
     new_tasks: Vec<Path>,
     objects: Vec<FsObject>, // TODO: poor naming - maybe `outputs`? + make it consistent across the code
@@ -277,7 +290,7 @@ struct TaskResults {
 
 fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
     let mut new_tasks = vec![];
-    let mut results = vec![];
+    let mut objects = vec![];
     for o in get_objects_in_path(&task_details.path_prefix) {
         let relative_path = std::path::Path::strip_prefix(
             std::path::Path::new(&o.path),
@@ -285,7 +298,7 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
 
         if regex.is_match(relative_path) {
             if task_details.remaining_components.is_empty() {
-                results.push(o.clone());
+                objects.push(o.clone());
             } else {
                 let mut new_task_components = vec![];
                 new_task_components.push(
@@ -296,13 +309,13 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
                     new_task_components.push(x.clone());
                 }
                 new_tasks.push(Path {
-                    components: fold_constant_components(new_task_components)
+                    components: new_task_components
                 });
             }
         }
     }
 
-    TaskResults{ new_tasks, objects: results }
+    TaskResults{ new_tasks, objects }
 }
 
 fn resolve_path(path: &Path) -> Vec<FsObject> {
@@ -315,47 +328,46 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
 
         // TODO: maybe change it, so current_component can be a const (so it can't be none)
         let task_details = get_task_details(&task);
+        dbg!(&task_details);
         match &task_details.current_component {
-            None => {
-                for o in get_objects_in_path(&task_details.path_prefix) {
+            PathComponent::Constant(c) => {
+                println!("Scanning: {} as part of: {:?}", c, task_details);
+                for o in get_objects_in_path(c) {
                     results.push(o);
                 }
             },
-            Some(component) => {
-                match component {
-                    PathComponent::Constant(_) => { panic!() },
-                    PathComponent::Glob(ref regex) => {
-                        let mut task_results = execute_glob_task(regex, &task_details);
-                        tasks.append(&mut task_results.new_tasks);
-                        results.append(&mut task_results.objects);
-                    },
-                    PathComponent::RecursiveScan { max_depth } => {
-                        let mut current_dir_task_components = vec![];
-                        current_dir_task_components.push(
-                            PathComponent::Constant(task_details.path_prefix.clone()));
-                        for x in task_details.remaining_components.clone() {
-                            current_dir_task_components.push(x.clone());
-                        }
-                        tasks.push(Path { components: fold_constant_components(current_dir_task_components) });
-                        println!("pushed new task: {:?}", tasks.last());
-
-                        for o in get_objects_in_path(&task_details.path_prefix) {
-                            if o.object_type == FsObjectType::Dir {
-                                let mut new_task_components = vec![];
-                                new_task_components.push(PathComponent::Constant(o.path.clone()));
-                                if max_depth > &1 {
-                                    new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
-                                }
-                                for x in task_details.remaining_components.clone() {
-                                    new_task_components.push(x.clone());
-                                }
-                                tasks.push(Path { components: fold_constant_components(new_task_components) });
-                                println!("pushed new task: {:?}", tasks.last());
-                            }
-                        }
-                    },
+            PathComponent::Glob(ref regex) => {
+                let mut task_results = execute_glob_task(regex, &task_details);
+                println!("glob tasks: {:?} results: {:?}", &task, &task_results);
+                tasks.append(&mut task_results.new_tasks);
+                results.append(&mut task_results.objects);
+            },
+            PathComponent::RecursiveScan { max_depth } => {
+                // println!("recursive scan tasks: {:?} results: {:?}", task, task_results);
+                let mut current_dir_task_components = vec![];
+                current_dir_task_components.push(
+                    PathComponent::Constant(task_details.path_prefix.clone()));
+                for x in task_details.remaining_components.clone() {
+                    current_dir_task_components.push(x.clone());
                 }
-            }
+                tasks.push(Path { components: current_dir_task_components });
+                println!("pushed new task: {:?}", tasks.last());
+
+                for o in get_objects_in_path(&task_details.path_prefix) {
+                    if o.object_type == FsObjectType::Dir {
+                        let mut new_task_components = vec![];
+                        new_task_components.push(PathComponent::Constant(o.path.clone()));
+                        if max_depth > &1 {
+                            new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
+                        }
+                        for x in task_details.remaining_components.clone() {
+                            new_task_components.push(x.clone());
+                        }
+                        tasks.push(Path { components: new_task_components });
+                        println!("pushed new task: {:?}", tasks.last());
+                    }
+                }
+            },
         }
 
         println!("--> finished task");

@@ -8,7 +8,6 @@ pub struct Path {
     pub components : Vec<PathComponent>
 }
 
-// Correct Path can't contain 2 consecutive `Constant` components.
 #[derive(Debug, Clone)]
 pub enum PathComponent {
     Constant(String),  // e.g. `/home/spawek/`
@@ -27,7 +26,7 @@ pub fn parse_path(path: &str) -> Path {
         .collect();
 
     components.insert(0, PathComponent::Constant("".to_owned())); // will add "/" at the beginning
-    let components = fold_constant_components(components);
+    let components = fold_constant_components(&components);
 
     Path{components}
 }
@@ -103,7 +102,7 @@ pub fn get_constant_component_value(constant_component: &PathComponent) -> Strin
     }
 }
 
-pub fn fold_constant_components(components: Vec<PathComponent>) -> Vec<PathComponent>{
+pub fn fold_constant_components(components: &Vec<PathComponent>) -> Vec<PathComponent>{
     let mut ret = vec![];
     for c in components {
         if !ret.is_empty() && is_constant_component(ret.last().unwrap()) && is_constant_component(&c) {
@@ -114,7 +113,7 @@ pub fn fold_constant_components(components: Vec<PathComponent>) -> Vec<PathCompo
                 + &get_constant_component_value(&c)));  // TODO: set "/" to proper value
         }
         else {
-            ret.push(c);
+            ret.push(c.clone());
         }
     }
 
