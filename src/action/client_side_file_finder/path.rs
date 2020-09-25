@@ -2,6 +2,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 
+//TODO: rename to Task?
 #[derive(Debug, Clone)]
 pub struct Path {
     pub components : Vec<PathComponent>
