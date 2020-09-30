@@ -357,6 +357,21 @@ fn execute_constant_task(path: &str) -> TaskResults {
     TaskResults { new_tasks: vec![], outputs }
 }
 
+fn execute_task(task: &Path) -> TaskResults {
+    let task_details = get_task_details(&task);
+    match &task_details.current_component {
+        PathComponent::Constant(ref c) => {
+            execute_constant_task(c)
+        },
+        PathComponent::Glob(ref regex) => {
+            execute_glob_task(regex, &task_details)
+        },
+        PathComponent::RecursiveScan { max_depth } => {
+            execute_recursive_scan_task(max_depth, &task_details)
+        }
+    }
+}
+
 fn resolve_path(path: &Path) -> Vec<FsObject> {
     let mut tasks = vec![path.clone()];
     let mut outputs = vec![];
@@ -365,24 +380,9 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
         let task = tasks.swap_remove(tasks.len() - 1);
         println!("--> Working on task: {:?}", &task);
 
-        let task_details = get_task_details(&task);
-        match &task_details.current_component {
-            PathComponent::Constant(ref c) => {
-                let mut task_results = execute_constant_task(c);
-                tasks.append(&mut task_results.new_tasks);
-                outputs.append(&mut task_results.outputs);
-            },
-            PathComponent::Glob(ref regex) => {
-                let mut task_results = execute_glob_task(regex, &task_details);
-                tasks.append(&mut task_results.new_tasks);
-                outputs.append(&mut task_results.outputs);
-            },
-            PathComponent::RecursiveScan { max_depth } => {
-                let mut task_results = execute_recursive_scan_task(max_depth, &task_details);
-                tasks.append(&mut task_results.new_tasks);
-                outputs.append(&mut task_results.outputs);
-            },
-        }
+        let mut task_results = execute_task(&task);
+        tasks.append(&mut task_results.new_tasks);
+        outputs.append(&mut task_results.outputs);
 
         println!("--> finished task");
     }
