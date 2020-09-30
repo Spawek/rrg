@@ -229,7 +229,7 @@ fn get_objects_in_path(path: &str) -> Vec<FsObject>
     ret
 }
 
-/// Task split to parts making the execution simpler.
+/// Task is split to parts to make the execution simpler.
 #[derive(Debug)]
 struct TaskDetails {
     /// Path prefix in which scope the task must be executed.
@@ -285,12 +285,12 @@ fn get_task_details(task: &Path) -> TaskDetails {
 #[derive(Debug)]
 struct TaskResults {
     new_tasks: Vec<Path>,
-    objects: Vec<FsObject>, // TODO: poor naming - maybe `outputs`? + make it consistent across the code
+    outputs: Vec<FsObject>, // TODO: poor naming - maybe `outputs`? + make it consistent across the code
 }
 
 fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
     let mut new_tasks = vec![];
-    let mut objects = vec![];
+    let mut outputs = vec![];
     for o in get_objects_in_path(&task_details.path_prefix) {
         let relative_path = std::path::Path::strip_prefix(
             std::path::Path::new(&o.path),
@@ -298,7 +298,7 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
 
         if regex.is_match(relative_path) {
             if task_details.remaining_components.is_empty() {
-                objects.push(o.clone());
+                outputs.push(o.clone());
             } else {
                 let mut new_task_components = vec![];
                 new_task_components.push(
@@ -315,7 +315,7 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
         }
     }
 
-    TaskResults{ new_tasks, objects }
+    TaskResults{ new_tasks, outputs }
 }
 
 fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> TaskResults{
@@ -345,45 +345,49 @@ fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> 
         }
     }
 
-    TaskResults{ new_tasks, objects: vec![] }
+    TaskResults{ new_tasks, outputs: vec![] }
+}
+
+fn execute_constant_task(path: &str) -> TaskResults {
+    let mut outputs = vec![];
+    for o in get_objects_in_path(path) {
+        outputs.push(o);
+    }
+
+    TaskResults { new_tasks: vec![], outputs }
 }
 
 fn resolve_path(path: &Path) -> Vec<FsObject> {
     let mut tasks = vec![path.clone()];
-    let mut results = vec![];
+    let mut outputs = vec![];
 
     while !tasks.is_empty() {
         let task = tasks.swap_remove(tasks.len() - 1);
         println!("--> Working on task: {:?}", &task);
 
-        // TODO: maybe change it, so current_component can be a const (so it can't be none)
         let task_details = get_task_details(&task);
-        dbg!(&task_details);
         match &task_details.current_component {
-            PathComponent::Constant(c) => {
-                println!("Scanning: {} as part of: {:?}", c, task_details);
-                for o in get_objects_in_path(c) {
-                    results.push(o);
-                }
+            PathComponent::Constant(ref c) => {
+                let mut task_results = execute_constant_task(c);
+                tasks.append(&mut task_results.new_tasks);
+                outputs.append(&mut task_results.outputs);
             },
             PathComponent::Glob(ref regex) => {
                 let mut task_results = execute_glob_task(regex, &task_details);
-                println!("executed glob task: {:?} results: {:?}", &task, &task_results);
                 tasks.append(&mut task_results.new_tasks);
-                results.append(&mut task_results.objects);
+                outputs.append(&mut task_results.outputs);
             },
             PathComponent::RecursiveScan { max_depth } => {
                 let mut task_results = execute_recursive_scan_task(max_depth, &task_details);
-                println!("executed recursive scan task: {:?} results: {:?}", &task, &task_results);
                 tasks.append(&mut task_results.new_tasks);
-                results.append(&mut task_results.objects);
+                outputs.append(&mut task_results.outputs);
             },
         }
 
         println!("--> finished task");
     }
 
-    results
+    outputs
 }
 
 
