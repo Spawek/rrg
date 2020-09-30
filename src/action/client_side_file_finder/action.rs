@@ -318,6 +318,36 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
     TaskResults{ new_tasks, objects }
 }
 
+fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> TaskResults{
+    let mut new_tasks = vec![];
+
+    let mut current_dir_task_components = vec![];
+    current_dir_task_components.push(
+        PathComponent::Constant(task_details.path_prefix.clone()));
+    for x in task_details.remaining_components.clone() {
+        current_dir_task_components.push(x.clone());
+    }
+    new_tasks.push(Path { components: current_dir_task_components });
+    println!("pushed new task: {:?}", new_tasks.last());
+
+    for o in get_objects_in_path(&task_details.path_prefix) {
+        if o.object_type == FsObjectType::Dir {
+            let mut new_task_components = vec![];
+            new_task_components.push(PathComponent::Constant(o.path.clone()));
+            if max_depth > &1 {
+                new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
+            }
+            for x in task_details.remaining_components.clone() {
+                new_task_components.push(x.clone());
+            }
+            new_tasks.push(Path { components: new_task_components });
+            println!("pushed new task: {:?}", new_tasks.last());
+        }
+    }
+
+    TaskResults{ new_tasks, objects: vec![] }
+}
+
 fn resolve_path(path: &Path) -> Vec<FsObject> {
     let mut tasks = vec![path.clone()];
     let mut results = vec![];
@@ -338,35 +368,15 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
             },
             PathComponent::Glob(ref regex) => {
                 let mut task_results = execute_glob_task(regex, &task_details);
-                println!("glob tasks: {:?} results: {:?}", &task, &task_results);
+                println!("executed glob task: {:?} results: {:?}", &task, &task_results);
                 tasks.append(&mut task_results.new_tasks);
                 results.append(&mut task_results.objects);
             },
             PathComponent::RecursiveScan { max_depth } => {
-                // println!("recursive scan tasks: {:?} results: {:?}", task, task_results);
-                let mut current_dir_task_components = vec![];
-                current_dir_task_components.push(
-                    PathComponent::Constant(task_details.path_prefix.clone()));
-                for x in task_details.remaining_components.clone() {
-                    current_dir_task_components.push(x.clone());
-                }
-                tasks.push(Path { components: current_dir_task_components });
-                println!("pushed new task: {:?}", tasks.last());
-
-                for o in get_objects_in_path(&task_details.path_prefix) {
-                    if o.object_type == FsObjectType::Dir {
-                        let mut new_task_components = vec![];
-                        new_task_components.push(PathComponent::Constant(o.path.clone()));
-                        if max_depth > &1 {
-                            new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
-                        }
-                        for x in task_details.remaining_components.clone() {
-                            new_task_components.push(x.clone());
-                        }
-                        tasks.push(Path { components: new_task_components });
-                        println!("pushed new task: {:?}", tasks.last());
-                    }
-                }
+                let mut task_results = execute_recursive_scan_task(max_depth, &task_details);
+                println!("executed recursive scan task: {:?} results: {:?}", &task, &task_results);
+                tasks.append(&mut task_results.new_tasks);
+                results.append(&mut task_results.objects);
             },
         }
 
@@ -401,7 +411,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test() {
+    fn local_files_test() {
         let mut session = session::test::Fake::new();
         let request = Request{
             paths: vec!("/home/spaw*/rrg/**1/*toml".to_owned()),
