@@ -111,10 +111,6 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     // TODO: by default everything is case insensitive
     // TODO: support polish characters
 
-
-    // TODO: glob to regex: https://source.corp.google.com/piper///depot/google3/ops/security/grr/core/grr_response_core/lib/util/compat/fnmatch.py;l=19;bpv=0;bpt=0;rcl=330034281
-    // TODO: support "!" globs
-
     // Design:
     // Path = [PathComponent]
     // Change request
@@ -168,18 +164,8 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
 }
 
 fn resolve_paths(paths : &Vec<Path>) -> Vec<FsObject> {
+    // TODO: remove identical elements
     paths.into_iter().flat_map(resolve_path).collect()
-}
-
-fn is_path_constant(path: &Path) -> bool {
-    if path.components.len() != 1 {
-        return false;
-    }
-
-    match path.components.first().unwrap() {
-        PathComponent::Constant(_) => true,
-        _ => false
-    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -189,7 +175,7 @@ enum FsObjectType
     File  // for now everything that is not a Dir is a file
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 struct FsObject
 {
     object_type: FsObjectType,
@@ -200,11 +186,17 @@ fn get_objects_in_path(path: &str) -> Vec<FsObject>
 {
     let path = std::path::Path::new(path);
     if !std::path::Path::is_dir(path) {
-        return vec![
-            FsObject{
-                path: path.to_str().unwrap().to_owned() /* UNSAFE CALL HERE! */,
-                object_type: FsObjectType::File
-            }];
+        if std::path::Path::is_file(path){
+            return vec![
+                FsObject{
+                    path: path.to_str().unwrap().to_owned() /* UNSAFE CALL HERE! */,
+                    object_type: FsObjectType::File
+                }];
+        }
+        else {
+            return vec![]
+        }
+        // TODO: support other types? or just switch to the "fs.rs" filetypes.
     }
 
     let mut ret = vec![];
@@ -266,7 +258,7 @@ fn get_task_details(task: &Path) -> TaskDetails {
                     .into_iter().map(|x| x.to_owned()).collect();
                 return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
             },
-            v @ PathComponent::RecursiveScan { .. } => {
+            v @ PathComponent::RecursiveScan {..} => {
                 let remaining_components = folded_components[i+1..]
                     .into_iter().map(|x| x.to_owned()).collect();
                 return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
@@ -387,6 +379,7 @@ fn resolve_path(path: &Path) -> Vec<FsObject> {
         println!("--> finished task");
     }
 
+    println!("\n!!!resolved path: {:?} to: {:?}\n", &path, &outputs);
     outputs
 }
 
@@ -413,6 +406,29 @@ impl super::super::Response for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_constant_path() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("abc")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abc").join("def")).unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: request, object_type: FsObjectType::Dir });
+    }
+
+    #[test]
+    fn test_constant_path_when_file_doesnt_exist() {
+        let tempdir = tempfile::tempdir().unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 0);
+    }
 
     #[test]
     fn local_files_test() {
