@@ -3,6 +3,12 @@
 // Use of this source code is governed by an MIT-style license that can be found
 // in the LICENSE file or at https://opensource.org/licenses/MIT.
 
+//! Defines the handler for `client side file finder` action.
+//!
+//! The handler keeps a list of paths to be resolved (a.k.a. `tasks`),
+//! initialized by request paths with resolved alternatives.
+//! Tasks are resolved by performing filesystem requests and generating
+//! outputs or new tasks.
 
 use crate::session::{self, Session};
 use rrg_proto::{FileFinderResult, Hash};
