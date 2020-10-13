@@ -18,7 +18,7 @@ use regex::{Regex};
 ///   - `/{a,b,}` are resolved both in GRR and in here
 /// - support for a single alternative e.g.:
 ///   - `/{asd}` is resolved here, but not in GRR
-pub fn expand_groups(path: &str) -> Vec<String> {
+pub fn resolve_path_alternatives(path: &str) -> Vec<String> {
     lazy_static! {
         static ref RE : Regex = Regex::new(r"\{[^\{]*?\}").unwrap();
     }
@@ -62,10 +62,10 @@ mod tests {
     #[test]
     fn expand_groups_test()
     {
-        assert_eq!(expand_groups("/some/path"), vec!["/some/path"]);
-        assert_eq!(expand_groups("/some/{1,2,3}"), vec!["/some/1", "/some/2", "/some/3"]);
-        assert_eq!(expand_groups("/some/{1,2}/{3,4}"), vec!["/some/1/3", "/some/1/4", "/some/2/3", "/some/2/4"]);
-        assert_eq!(expand_groups("/some/{1,}a/{3,}a"), vec!["/some/1a/3a", "/some/1a/a", "/some/a/3a", "/some/a/a"]);
-        assert_eq!(expand_groups("/some/{123}"), vec!["/some/123"]);
+        assert_eq!(resolve_path_alternatives("/some/path"), vec!["/some/path"]);
+        assert_eq!(resolve_path_alternatives("/some/{1,2,3}"), vec!["/some/1", "/some/2", "/some/3"]);
+        assert_eq!(resolve_path_alternatives("/some/{1,2}/{3,4}"), vec!["/some/1/3", "/some/1/4", "/some/2/3", "/some/2/4"]);
+        assert_eq!(resolve_path_alternatives("/some/{1,}a/{3,}a"), vec!["/some/1a/3a", "/some/1a/a", "/some/a/3a", "/some/a/a"]);
+        assert_eq!(resolve_path_alternatives("/some/{123}"), vec!["/some/123"]);
     }
 }

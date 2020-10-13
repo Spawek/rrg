@@ -3,20 +3,6 @@
 // Use of this source code is governed by an MIT-style license that can be found
 // in the LICENSE file or at https://opensource.org/licenses/MIT.
 
-/// Handle client side file finder requests.
-///
-/// Before this handler starts its work protobuf request is parsed to
-/// client_side_file_finder::Request.
-///
-/// The basic functionality of this handler is to return information
-/// about the filesystem object with given path.
-/// Features supported by this handler:
-/// - resolve glob expressions inb paths e.g. `/a?[!d]*` can match `/abcd`
-/// - resolve recursive elements in glob expressions e.g. `/**` can match `/a/b`
-/// - resolve alternatives in paths e.g. `/a{b,c}d` can match `/abd` and `/acd`
-///
-/// Expression expansion (like `%%hostname%%` visible in the GRR Admin UI)
-/// is performed on the server side, so it's out of scope of this handler.
 
 use crate::session::{self, Session};
 use rrg_proto::{FileFinderResult, Hash};
@@ -25,7 +11,7 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
-use crate::action::client_side_file_finder::expand_groups::expand_groups;
+use crate::action::client_side_file_finder::resolve_path_alternatives::resolve_path_alternatives;
 use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent, fold_constant_components};
 use super::request::*;
 use std::fs;
@@ -98,9 +84,6 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
         Action::Hash(_) => { return Err(UnsupportedRequestError::new("Hash action is not supported".to_string())) },
         Action::Download(_) => { return Err(UnsupportedRequestError::new("Download action is not supported".to_string())) },
     }
-    // I assume the action is Stat after this point.
-
-    // "/path/*" gives all the files from the dir
     // "/path/C*" gives all the files from the dir staring with letter "C"
     // "/path/*md" gives all the files from the dir ending with "md"
     // "/path" or "/path/" stats the dir
@@ -154,7 +137,7 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     // caching can help
 
     let paths : Vec<Path> = req.paths.into_iter()
-        .flat_map(|ref x| expand_groups(x))
+        .flat_map(|ref x| resolve_path_alternatives(x))
         .map(|ref x| parse_path(x))
         .collect();
 
