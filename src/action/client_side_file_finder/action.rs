@@ -5,10 +5,10 @@
 
 //! Defines the handler for `client side file finder` action.
 //!
-//! The handler keeps a list of paths to be resolved (a.k.a. `tasks`),
+//! The handler keeps a queue of paths to be resolved (a.k.a. `tasks`),
 //! initialized by request paths with resolved alternatives.
 //! Tasks are resolved by performing filesystem requests and generating
-//! outputs or new tasks.
+//! outputs or adding new tasks to the queue.
 
 use crate::session::{self, Session};
 use rrg_proto::{FileFinderResult, Hash};
@@ -90,55 +90,11 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
         Action::Hash(_) => { return Err(UnsupportedRequestError::new("Hash action is not supported".to_string())) },
         Action::Download(_) => { return Err(UnsupportedRequestError::new("Download action is not supported".to_string())) },
     }
-    // "/path" or "/path/" stats the dir
-    // "/path/*/*" gets all files from 2 directories below
-    // path expansion in code: grr_response_client/client_actions/file_finder.py:44
-
-    // recursive component = "**"
-    // DEFAULT_MAX_DEPTH = 3
-    // change of MAX_DEPTH is done by adding a parameter **<number> - e.g. "**2"
-
-    // TODO: recursive component must be /**\d*/ exactly or it should throw
-    // TODO: max 1 recursive component is allowed
-
-    // ? = any char
-    // [a-z] works like regexp
-    // /home/spawek/rrg/Cargo.[tl]o[cm][lk] -> *toml + *lock
-
     // TODO: path must be absolute
-    // TODO: parent dir is supported? e.g. //asd/asd/../asd
-    // TODO: %%user.home%% is implemented on server-side: https://source.corp.google.com/piper///depot/google3/ops/security/grr/core/grr_response_core/lib/interpolation.py - write a comment about it
     // TODO: by default everything is case insensitive
-    // TODO: support polish characters
-
-    // Design:
-    // Path = [PathComponent]
-    // Change request
-    // "/home/spawek/rrg/**7/*{t??l, l??k}"
-    // to:
-    // [Path]: [
-    //      [(Constant: "/home/spawek/"), (RecursiveComponent: depth = 7), (Scan: regex = .*t??l)]
-    //      [(Constant: "/home/spawek/"), (RecursiveComponent: depth = 7), (Scan: regex = .*l??k)]
-    // ]
-    // And then map Path to ([Path], [Entry])  // entry = final file/directory path string
-    // until the list of paths is empty
-    // e.g. mapping (Constant: "/home/spawek/"), (RecursiveComponent: depth = 7), (Scan: regex = .*t??l)
-    // may return (
-    //  paths[
-    //      [(Constant: "/home/spawek/qwe"), (RecursiveComponent: depth = 6), (Scan: regex = .*t??l)])
-    //  ],
-    //  entries[
-    //      ["/home/spawek/file1.toml", "/home/spawek/file2.toml"]
-    //  ]
-    // )
-    //
-    // code design
-    // create a trait DirReader doing (string -> [file])
-    // then:
-    // fn Scan(path: Path, dir_reader: DirReader) -> [String]
-
+    // TODO: support unicode and non-unicode characters
     // TODO: it would be nice if 1 dir is not scanned twice in the same search - even if paths are overlapping
-    // caching can help
+    //       caching can help
 
     let paths : Vec<Path> = req.paths.into_iter()
         .flat_map(|ref x| resolve_path_alternatives(x))
