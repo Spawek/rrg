@@ -554,7 +554,7 @@ mod tests {
 
 
     #[test]
-    fn test_glob_recurse_with_default_max_depth() {
+    fn test_glob_recurse_default_max_depth() {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("a")).unwrap();
         std::fs::create_dir(tempdir.path().join("a/b")).unwrap();
@@ -595,6 +595,21 @@ mod tests {
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b/c").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+    }
+
+    #[test]
+    fn test_glob_recurse_and_parent_component_in_path() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("a")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b/c")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b/c/d")).unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/**/../c/d";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b/c/d").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
 
 // TODO: alternatives tests  // must be done on request level (testing using resolve_path can't cover it)
