@@ -150,15 +150,6 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     let resolved_paths = resolve_paths(&paths);
     println!("resolved paths: {:?} to: {:?}", &paths, &resolved_paths);
 
-    // for path in req.paths  // TODO: handle a case when a path is inside another one
-    // {
-    //     let dir = std::fs::read_dir(path);
-    //     if !dir.is_ok() {
-    //         continue;
-    //     }
-    //     dir.unwrap().map(|res| res.map(|e| e))
-    // }
-
     session.reply(Response {})?;
     Ok(())
 }
@@ -341,18 +332,18 @@ fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> 
 }
 
 fn execute_constant_task(path: &str) -> TaskResults {
-    let new_tasks = vec![];
-
     let path = std::path::Path::new(path);
+    dbg!(&path);
     if !path.exists(){
-        TaskResults { new_tasks, outputs: vec![] }
+        TaskResults { new_tasks: vec![], outputs: vec![] }
     }
     else {
+        let path = path.canonicalize().unwrap();
         if path.is_dir(){
-            TaskResults {new_tasks, outputs: vec![FsObject{object_type: FsObjectType::Dir, path: path.to_str().unwrap().to_owned()}]}
+            TaskResults {new_tasks: vec![], outputs: vec![FsObject{object_type: FsObjectType::Dir, path: path.to_str().unwrap().to_owned()}]}
         }
         else {
-            TaskResults {new_tasks, outputs: vec![FsObject{object_type: FsObjectType::File, path: path.to_str().unwrap().to_owned()}]}
+            TaskResults {new_tasks: vec![], outputs: vec![FsObject{object_type: FsObjectType::File, path: path.to_str().unwrap().to_owned()}]}
             // TODO: support types other than File and Dir
         }
     }
@@ -459,6 +450,21 @@ mod tests {
         let resolved = resolve_path(&parse_path(&request));
 
         assert_eq!(resolved.len(), 0);
+    }
+
+
+    #[test]
+    fn test_constant_path_containing_parent_directory() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("a")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/c")).unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/a/b/../c";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/c").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
 
     #[test]
