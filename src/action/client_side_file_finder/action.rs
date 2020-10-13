@@ -191,8 +191,7 @@ fn get_task_details(task: &Path) -> TaskDetails {
     let folded_components = fold_constant_components(&task.components);
     println!("folded components: {:?}", folded_components);
 
-    // Scan components until getting non-const component or
-    // reaching the end of the path.
+    // Scan components until an non-const component or the end of path.
     let mut path_prefix = "".to_owned();
     for i in 0..folded_components.len(){
         let component = folded_components.get(i).unwrap();
