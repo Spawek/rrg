@@ -341,12 +341,21 @@ fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> 
 }
 
 fn execute_constant_task(path: &str) -> TaskResults {
-    let mut outputs = vec![];
-    for o in get_objects_in_path(path) {
-        outputs.push(o);
-    }
+    let new_tasks = vec![];
 
-    TaskResults { new_tasks: vec![], outputs }
+    let path = std::path::Path::new(path);
+    if !path.exists(){
+        TaskResults { new_tasks, outputs: vec![] }
+    }
+    else {
+        if path.is_dir(){
+            TaskResults {new_tasks, outputs: vec![FsObject{object_type: FsObjectType::Dir, path: path.to_str().unwrap().to_owned()}]}
+        }
+        else {
+            TaskResults {new_tasks, outputs: vec![FsObject{object_type: FsObjectType::File, path: path.to_str().unwrap().to_owned()}]}
+            // TODO: support types other than File and Dir
+        }
+    }
 }
 
 fn execute_task(task: &Path) -> TaskResults {
@@ -408,11 +417,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_constant_path() {
+    fn test_constant_path_with_file() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::write(tempdir.path().join("abc"), "").unwrap();
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
+        let resolved = resolve_path(&parse_path(&request));
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: request, object_type: FsObjectType::File });
+    }
+
+    #[test]
+    fn test_constant_path_with_empty_dir() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("abc")).unwrap();
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: request, object_type: FsObjectType::Dir });
+    }
+
+    #[test]
+    fn test_constant_path_with_nonempty_dir() {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
         std::fs::create_dir(tempdir.path().join("abc").join("def")).unwrap();
-
         let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
         let resolved = resolve_path(&parse_path(&request));
 
@@ -433,15 +462,29 @@ mod tests {
     #[test]
     fn test_glob_star() {
         let tempdir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(tempdir.path().join("abc")).unwrap();
-        std::fs::create_dir(tempdir.path().join("abd")).unwrap();
-        std::fs::create_dir(tempdir.path().join("xbc")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abbc")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abbd")).unwrap();
+        std::fs::create_dir(tempdir.path().join("xbbc")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/a*c";
         let resolved = resolve_path(&parse_path(&request));
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abbc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+    }
+
+    #[test]
+    fn test_glob_star_followed_by_constant() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("abc")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abc").join("123")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abc").join("123").join("qwe")).unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/*/123";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abbc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
 
     #[test]
@@ -471,6 +514,12 @@ mod tests {
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abd").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
+
+// TODO: other glob features tests
+
+// TODO: recurse tests
+// TODO: alternatves tests
+// TODO: change Path inner type to std::path::Path
 
     #[test]
     fn local_files_test() {
