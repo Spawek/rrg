@@ -3,7 +3,20 @@
 // Use of this source code is governed by an MIT-style license that can be found
 // in the LICENSE file or at https://opensource.org/licenses/MIT.
 
-//! TODO: add a comment
+/// Handle client side file finder requests.
+///
+/// Before this handler starts its work protobuf request is parsed to
+/// client_side_file_finder::Request.
+///
+/// The basic functionality of this handler is to return information
+/// about the filesystem object with given path.
+/// Features supported by this handler:
+/// - resolve glob expressions inb paths e.g. `/a?[!d]*` can match `/abcd`
+/// - resolve recursive elements in glob expressions e.g. `/**` can match `/a/b`
+/// - resolve alternatives in paths e.g. `/a{b,c}d` can match `/abd` and `/acd`
+///
+/// Expression expansion (like `%%hostname%%` visible in the GRR Admin UI)
+/// is performed on the server side, so it's out of scope of this handler.
 
 use crate::session::{self, Session};
 use rrg_proto::{FileFinderResult, Hash};
@@ -515,11 +528,28 @@ mod tests {
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
 
+    #[test]
+    fn test_glob_wildcard() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("abc")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abd")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abe")).unwrap();
+        std::fs::create_dir(tempdir.path().join("ac")).unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/a?c";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+    }
+
 // TODO: other glob features tests
 
 // TODO: recurse tests
-// TODO: alternatves tests
+// TODO: alternatives tests  // must be done on request level (testing using resolve_path can't cover it)
 // TODO: change Path inner type to std::path::Path
+// TODO: test with 2 paths reaching identical element
+// TODO: test 2 recursive elements throwing an error
 
     #[test]
     fn local_files_test() {
