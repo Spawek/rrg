@@ -90,8 +90,6 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
         Action::Hash(_) => { return Err(UnsupportedRequestError::new("Hash action is not supported".to_string())) },
         Action::Download(_) => { return Err(UnsupportedRequestError::new("Download action is not supported".to_string())) },
     }
-    // "/path/C*" gives all the files from the dir staring with letter "C"
-    // "/path/*md" gives all the files from the dir ending with "md"
     // "/path" or "/path/" stats the dir
     // "/path/*/*" gets all files from 2 directories below
     // path expansion in code: grr_response_client/client_actions/file_finder.py:44
@@ -443,7 +441,7 @@ mod tests {
     fn test_constant_path_with_nonempty_dir() {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
-        std::fs::create_dir(tempdir.path().join("abc").join("def")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abc/def")).unwrap();
         let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
         let resolved = resolve_path(&parse_path(&request));
 
@@ -476,17 +474,31 @@ mod tests {
     }
 
     #[test]
+    fn test_glob_star_doesnt_return_intermediate_directories() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("a")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b/c")).unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/*/*";
+        let resolved = resolve_path(&parse_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+    }
+
+    #[test]
     fn test_glob_star_followed_by_constant() {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
-        std::fs::create_dir(tempdir.path().join("abc").join("123")).unwrap();
-        std::fs::create_dir(tempdir.path().join("abc").join("123").join("qwe")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abc/123")).unwrap();
+        std::fs::create_dir(tempdir.path().join("abc/123/qwe")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/*/123";
         let resolved = resolve_path(&parse_path(&request));
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abbc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc/123").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
 
     #[test]
