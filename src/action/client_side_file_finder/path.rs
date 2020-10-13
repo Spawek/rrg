@@ -63,9 +63,9 @@ pub struct Path {
 
 #[derive(Debug, Clone)]
 pub enum PathComponent {
-    Constant(String),  // e.g. `/home/spawek/`
-    Glob(Regex),  // converted from glob e.g. `sp*[wek]??`
-    RecursiveScan {max_depth: i32},  // converted from glob recursive component i.e. `**`
+    Constant(String),  // e.g. `/home/user/`
+    Glob(Regex),  // glob expression e.g. `sp*[wek]??`
+    RecursiveScan {max_depth: i32},  // glob recursive component - `**` in path
 }
 
 pub fn parse_path(path: &str) -> Path {
