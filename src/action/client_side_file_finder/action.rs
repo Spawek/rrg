@@ -18,10 +18,10 @@ use rrg_proto::file_finder_args::XDev;
 use crate::action::client_side_file_finder::request::Action;
 use std::fmt::{Formatter, Display};
 use crate::action::client_side_file_finder::resolve_path_alternatives::resolve_path_alternatives;
-use crate::action::client_side_file_finder::path::{Path, parse_path, PathComponent, fold_constant_components};
 use super::request::*;
 use std::fs;
 use regex::Regex;
+use crate::action::client_side_file_finder::path::{PathComponent, Path, parse_path, TaskDetails, get_task_details};
 
 #[derive(Debug)]
 pub struct Response {
@@ -168,64 +168,13 @@ fn get_objects_in_path(path: &str) -> Vec<FsObject>
     ret
 }
 
-/// Task is split to parts to make the execution simpler.
-#[derive(Debug)]
-struct TaskDetails {
-    /// Path prefix in which scope the task must be executed.
-    /// Given example task: `/a/b/**4/c/d*` this part would be `/a/b`.
-    /// Given example task: `/a/b/c` this part would be empty.
-    path_prefix: String,
-
-    /// Current `PathComponent` to be executed.
-    /// Given example task: `/a/b/**4/c/d*` this part would be `/**4`.
-    /// Given example task: `/a/b/c` this part would be `/a/b/c`.
-    current_component : PathComponent,
-
-    /// Remaining path components to be executed in following tasks.
-    /// Given example task: `/a/b/**4/c/d*` this part would be `c/d*`.
-    /// Given example task: `/a/b/c` this part would be empty.
-    remaining_components : Vec<PathComponent>,
-}
-
-fn get_task_details(task: &Path) -> TaskDetails {
-    let folded_components = fold_constant_components(&task.components);
-    println!("folded components: {:?}", folded_components);
-
-    // Scan components until an non-const component or the end of path.
-    let mut path_prefix = "".to_owned();
-    for i in 0..folded_components.len(){
-        let component = folded_components.get(i).unwrap();
-        match component{
-            PathComponent::Constant(c) => {
-                path_prefix = c.to_owned();
-            },
-            v @ PathComponent::Glob(_) => {
-                let remaining_components = folded_components[i+1..]
-                    .into_iter().map(|x| x.to_owned()).collect();
-                return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
-            },
-            v @ PathComponent::RecursiveScan {..} => {
-                let remaining_components = folded_components[i+1..]
-                    .into_iter().map(|x| x.to_owned()).collect();
-                return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
-
-            },
-        }
-    }
-
-    TaskDetails {
-        path_prefix: "".to_owned(),
-        current_component: PathComponent::Constant(path_prefix.to_owned()),
-        remaining_components: vec![]
-    }
-}
-
 #[derive(Debug)]
 struct TaskResults {
     new_tasks: Vec<Path>,
     outputs: Vec<FsObject>, // TODO: poor naming - maybe `outputs`? + make it consistent across the code
 }
 
+// TODO: change to take path_prefix and remaining components instead of task_details
 fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
     let mut new_tasks = vec![];
     let mut outputs = vec![];
@@ -256,6 +205,7 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
     TaskResults{ new_tasks, outputs }
 }
 
+// TODO: change to take path_prefix and remaining components instead of task_details
 fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> TaskResults{
     let mut new_tasks = vec![];
 
@@ -361,6 +311,7 @@ impl super::super::Response for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action::client_side_file_finder::path::parse_path;
 
     #[test]
     fn test_constant_path_with_file() {

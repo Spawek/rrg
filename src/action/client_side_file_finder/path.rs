@@ -2,6 +2,59 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use crate::action::client_side_file_finder::glob_to_regex::glob_to_regex;
 
+/// Task is split into parts to make the execution simpler.
+#[derive(Debug)]
+pub struct TaskDetails {
+    /// Path prefix in which scope the task must be executed.
+    /// Given example task: `/a/b/**4/c/d*` this part would be `/a/b`.
+    /// Given example task: `/a/b/c` this part would be empty.
+    pub path_prefix: String,
+
+    /// Current `PathComponent` to be executed.
+    /// Given example task: `/a/b/**4/c/d*` this part would be `/**4`.
+    /// Given example task: `/a/b/c` this part would be `/a/b/c`.
+    pub current_component : PathComponent,
+
+    /// Remaining path components to be executed in following tasks.
+    /// Given example task: `/a/b/**4/c/d*` this part would be `c/d*`.
+    /// Given example task: `/a/b/c` this part would be empty.
+    pub remaining_components : Vec<PathComponent>,
+}
+
+pub fn get_task_details(task: &Path) -> TaskDetails {
+    let folded_components = fold_constant_components(&task.components);
+    println!("folded components: {:?}", folded_components);
+
+    // Scan components until an non-const component or the end of path.
+    let mut path_prefix = "".to_owned();
+    for i in 0..folded_components.len(){
+        let component = folded_components.get(i).unwrap();
+        match component{
+            PathComponent::Constant(c) => {
+                path_prefix = c.to_owned();
+            },
+            v @ PathComponent::Glob(_) => {
+                let remaining_components = folded_components[i+1..]
+                    .into_iter().map(|x| x.to_owned()).collect();
+                return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
+            },
+            v @ PathComponent::RecursiveScan {..} => {
+                let remaining_components = folded_components[i+1..]
+                    .into_iter().map(|x| x.to_owned()).collect();
+                return TaskDetails{path_prefix, current_component: v.clone(), remaining_components}
+
+            },
+        }
+    }
+
+    TaskDetails {
+        path_prefix: "".to_owned(),
+        current_component: PathComponent::Constant(path_prefix.to_owned()),
+        remaining_components: vec![]
+    }
+}
+
+//TODO: remove it and use TaskDetails instead right away
 //TODO: rename to Task?
 #[derive(Debug, Clone)]
 pub struct Path {
