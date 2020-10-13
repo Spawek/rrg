@@ -508,11 +508,11 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("abd")).unwrap();
         std::fs::create_dir(tempdir.path().join("abe")).unwrap();
 
-        let request = tempdir.path().to_str().unwrap().to_owned() + "/ab[!ce]";
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/ab[!de]";
         let resolved = resolve_path(&parse_path(&request));
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abd").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
 
 // TODO: other glob features tests
