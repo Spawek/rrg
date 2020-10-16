@@ -21,7 +21,7 @@ use crate::action::client_side_file_finder::resolve_path_alternatives::resolve_p
 use super::request::*;
 use std::fs;
 use regex::Regex;
-use crate::action::client_side_file_finder::path::{PathComponent, parse_path, TaskDetails, get_task_details};
+use crate::action::client_side_file_finder::path::{PathComponent, build_task_from_path, Task, build_task};
 
 #[derive(Debug)]
 pub struct Response {
@@ -96,9 +96,9 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     // TODO: it would be nice if 1 dir is not scanned twice in the same search - even if paths are overlapping
     //       caching can help
 
-    let tasks: Vec<TaskDetails> = req.paths.into_iter()
+    let tasks: Vec<Task> = req.paths.into_iter()
         .flat_map(|ref x| resolve_path_alternatives(x))
-        .map(|ref x| parse_path(x))
+        .map(|ref x| build_task_from_path(x))
         .collect();
 
     println!("tasks: {:#?}", tasks);
@@ -110,7 +110,7 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     Ok(())
 }
 
-fn execute_tasks(paths : Vec<TaskDetails>) -> Vec<FsObject> {
+fn execute_tasks(paths : Vec<Task>) -> Vec<FsObject> {
     // TODO: remove identical elements
     paths.into_iter().flat_map(resolve_path).collect()
 }
@@ -170,12 +170,12 @@ fn get_objects_in_path(path: &str) -> Vec<FsObject>
 
 #[derive(Debug)]
 struct TaskResults {
-    new_tasks: Vec<TaskDetails>,
+    new_tasks: Vec<Task>,
     outputs: Vec<FsObject>, // TODO: poor naming - maybe `outputs`? + make it consistent across the code
 }
 
 // TODO: change to take path_prefix and remaining components instead of task_details
-fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
+fn execute_glob_task(regex : &Regex, task_details: &Task) -> TaskResults{
     let mut new_tasks = vec![];
     let mut outputs = vec![];
     for o in get_objects_in_path(&task_details.path_prefix) {
@@ -195,7 +195,7 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
                 for x in task_details.remaining_components.clone() {
                     new_task_components.push(x.clone());
                 }
-                new_tasks.push(get_task_details(&new_task_components));
+                new_tasks.push(build_task(new_task_components));
             }
         }
     }
@@ -204,16 +204,14 @@ fn execute_glob_task(regex : &Regex, task_details: &TaskDetails) -> TaskResults{
 }
 
 // TODO: change to take path_prefix and remaining components instead of task_details
-fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> TaskResults{
+fn execute_recursive_scan_task(max_depth : &i32, task_details: &Task) -> TaskResults{
     let mut new_tasks = vec![];
 
     let mut current_dir_task_components = vec![];
     current_dir_task_components.push(
         PathComponent::Constant(task_details.path_prefix.clone()));
-    for x in task_details.remaining_components.clone() {
-        current_dir_task_components.push(x.clone());
-    }
-    new_tasks.push(get_task_details(&current_dir_task_components));
+    current_dir_task_components.extend(task_details.remaining_components.clone());
+    new_tasks.push(build_task(current_dir_task_components));
     println!("pushed new task: {:#?}", new_tasks.last());
 
     for o in get_objects_in_path(&task_details.path_prefix) {
@@ -223,10 +221,8 @@ fn execute_recursive_scan_task(max_depth : &i32, task_details: &TaskDetails) -> 
             if max_depth > &1 {
                 new_task_components.push(PathComponent::RecursiveScan { max_depth: max_depth - 1 });
             }
-            for x in task_details.remaining_components.clone() {
-                new_task_components.push(x.clone());
-            }
-            new_tasks.push(get_task_details(&new_task_components));
+            new_task_components.extend(task_details.remaining_components.clone());
+            new_tasks.push(build_task(new_task_components));
             println!("pushed new task: {:#?}", new_tasks.last());
         }
     }
@@ -252,7 +248,7 @@ fn execute_constant_task(path: &str) -> TaskResults {
     }
 }
 
-fn execute_task(task: &TaskDetails) -> TaskResults {
+fn execute_task(task: &Task) -> TaskResults {
     match &task.current_component {
         PathComponent::Constant(ref c) => {
             execute_constant_task(c)
@@ -268,7 +264,7 @@ fn execute_task(task: &TaskDetails) -> TaskResults {
 
 // TODO: rename this foo
 // TODO: rename arg
-fn resolve_path(path: TaskDetails) -> Vec<FsObject> {
+fn resolve_path(path: Task) -> Vec<FsObject> {
     let mut tasks = vec![path];
     let mut outputs = vec![];
 
@@ -310,7 +306,7 @@ impl super::super::Response for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::client_side_file_finder::path::parse_path;
+    use crate::action::client_side_file_finder::path::build_task_from_path;
 
     #[test]
     fn test_constant_path_with_file() {
@@ -318,7 +314,7 @@ mod tests {
         std::fs::write(tempdir.path().join("abc"), "").unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: request, object_type: FsObjectType::File });
@@ -329,7 +325,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
         let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: request, object_type: FsObjectType::Dir });
@@ -341,7 +337,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
         std::fs::create_dir(tempdir.path().join("abc/def")).unwrap();
         let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: request, object_type: FsObjectType::Dir });
@@ -352,7 +348,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/abc";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 0);
     }
@@ -366,7 +362,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a/c")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/a/b/../c";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/c").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -380,7 +376,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("xbbc")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/a*c";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abbc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -394,7 +390,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a/b/c")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/*/*";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -408,7 +404,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("abc/123/qwe")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/*/123";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc/123").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -422,7 +418,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("xbc")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/ab[c]";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -436,7 +432,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("abe")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/ab[!de]";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -451,7 +447,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("ac")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/a?c";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("abc").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -467,7 +463,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a/b/c/d")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/**/c";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b/c").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -482,7 +478,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a/b/c/d")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/**1/c";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 0);
     }
@@ -496,7 +492,7 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a/b/c/d")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/**2/c";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b/c").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
@@ -511,10 +507,24 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a/b/c/d")).unwrap();
 
         let request = tempdir.path().to_str().unwrap().to_owned() + "/**/../c/d";
-        let resolved = resolve_path(parse_path(&request));
+        let resolved = resolve_path(build_task_from_path(&request));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b/c/d").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
+    }
+
+    #[test]
+    fn test_directory_name_containing_glob_characters() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("a")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b*[xyz]")).unwrap();
+        std::fs::create_dir(tempdir.path().join("a/b*[xyz]/c")).unwrap();
+
+        let request = tempdir.path().to_str().unwrap().to_owned() + "/a/*/c";
+        let resolved = resolve_path(build_task_from_path(&request));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], FsObject{path: tempdir.path().join("a/b*[xyz]/c").to_str().unwrap().to_owned(), object_type: FsObjectType::Dir });
     }
 
 // TODO: alternatives tests  // must be done on request level (testing using resolve_path can't cover it)
