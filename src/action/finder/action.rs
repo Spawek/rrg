@@ -15,13 +15,13 @@ use rrg_proto::{FileFinderResult, Hash};
 use log::info;
 use rrg_proto::path_spec::PathType;
 use rrg_proto::file_finder_args::XDev;
-use crate::action::client_side_file_finder::request::Action;
+use crate::action::finder::request::Action;
 use std::fmt::{Formatter, Display};
-use crate::action::client_side_file_finder::resolve_path_alternatives::resolve_path_alternatives;
+use crate::action::finder::resolve_path_alternatives::resolve_path_alternatives;
 use super::request::*;
 use std::fs;
 use regex::Regex;
-use crate::action::client_side_file_finder::path::{PathComponent, build_task_from_path, Task, build_task};
+use crate::action::finder::path::{PathComponent, build_task_from_path, Task, build_task};
 
 #[derive(Debug)]
 pub struct Response {
@@ -306,7 +306,7 @@ impl super::super::Response for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::action::client_side_file_finder::path::build_task_from_path;
+    use crate::action::finder::path::build_task_from_path;
 
     #[test]
     fn test_constant_path_with_file() {
