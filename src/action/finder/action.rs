@@ -17,7 +17,7 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::file_finder_args::XDev;
 use crate::action::finder::request::Action;
 use std::fmt::{Formatter, Display};
-use crate::action::finder::resolve_path_alternatives::resolve_path_alternatives;
+use crate::action::finder::expand_groups::expand_groups;
 use super::request::*;
 use std::fs;
 use regex::Regex;
@@ -97,7 +97,7 @@ pub fn handle<S: Session>(session: &mut S, req: Request) -> session::Result<()> 
     //       caching can help
 
     let tasks: Vec<Task> = req.paths.into_iter()
-        .flat_map(|ref x| resolve_path_alternatives(x))
+        .flat_map(|ref x| expand_groups(x))
         .map(|ref x| build_task_from_path(x))
         .collect();
 

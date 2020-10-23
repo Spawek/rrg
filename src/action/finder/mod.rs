@@ -19,12 +19,12 @@
 //! - `action.rs` defines a handler and covers the main functionality.
 //! - `request.rs` parses protobuf request to the internal representation.
 //! - `glob_to_regex.rs` converts glob expressions to `regex::Regex`.
-//! - `resolve_path_alternatives.rs` performs groups expansions.
+//! - `expand_groups.rs` resolves paths alternatives.
 //! - `path.rs` parses paths to internal representation.
 
 pub mod action;
 
 mod request;
 mod glob_to_regex;
-mod resolve_path_alternatives;
+mod expand_groups;
 mod path;
