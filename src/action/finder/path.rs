@@ -1,12 +1,13 @@
 use lazy_static::lazy_static;
 use regex::Regex;
 use crate::action::finder::glob_to_regex::glob_to_regex;
+use std::path::{PathBuf};
 
 /// Part of the path. Paths are split to list of `PathComponent` to make
 /// the processing simpler.
 #[derive(Debug, Clone)]
 pub enum PathComponent {
-    Constant(String),  // e.g. `/home/user/`
+    Constant(PathBuf),  // e.g. `/home/user/`
     Glob(Regex),  // e.g. `sp*[wek]??`
     RecursiveScan {max_depth: i32},  // glob recursive component - `**` in path
 }
@@ -17,7 +18,7 @@ pub struct Task {
     /// Path prefix in which scope the task must be executed.
     /// Given example task: `/a/b/**4/c/d*` this part would be `/a/b`.
     /// Given example task: `/a/b/c` this part would be empty.
-    pub path_prefix: String,
+    pub path_prefix: PathBuf,
 
     /// Current `PathComponent` to be executed.
     /// Given example task: `/a/b/**4/c/d*` this part would be `**4`.
@@ -30,12 +31,12 @@ pub struct Task {
     pub remaining_components : Vec<PathComponent>,
 }
 
-pub fn build_task(components: Vec<PathComponent>) -> Task {
+pub fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     let folded_components = fold_constant_components(components);
     println!("folded components: {:?}", folded_components);
 
     // Scan components until an non-const component or the end of path.
-    let mut path_prefix = "".to_owned();
+    let mut path_prefix = PathBuf::default();
     for i in 0..folded_components.len(){
         let component = folded_components.get(i).unwrap();
         match component{
@@ -57,26 +58,26 @@ pub fn build_task(components: Vec<PathComponent>) -> Task {
     }
 
     Task {
-        path_prefix: "".to_owned(),
+        path_prefix: PathBuf::default(),
         current_component: PathComponent::Constant(path_prefix.to_owned()),
         remaining_components: vec![]
     }
 }
 
-// TODO: rename this foo
-pub fn build_task_from_path(path: &str) -> Task {
+pub fn build_task(path: &str) -> Task {
     if !path.starts_with(&"/") {
         panic!("path must be absolute");  // TODO: throw a meaningful error
     }
-    let split : Vec<&str> = path.split("/").collect();  // TODO: support different OS separators
-    let mut components : Vec<PathComponent> = split.into_iter()
+
+    // adds the root dir // TODO: rethink this comment
+    let mut components : Vec<PathComponent> = vec![PathComponent::Constant(PathBuf::default())];  // TODO: is it needed actually
+    components.extend(
+        path.split("/").into_iter()  // // TODO: support different OS separators
         .filter(|x| !x.is_empty())
         .map(get_path_component)
-        .collect();
+        .collect());
 
-    components.insert(0, PathComponent::Constant("".to_owned())); // will add "/" at the beginning
-
-    build_task(fold_constant_components(components))
+    build_task_from_components(fold_constant_components(components))
 }
 
 fn get_path_component(s : &str) -> PathComponent {
@@ -90,7 +91,7 @@ fn get_path_component(s : &str) -> PathComponent {
         return glob.unwrap();
     }
 
-    PathComponent::Constant(s.to_owned())
+    PathComponent::Constant(PathBuf::from(s))
 }
 
 fn get_recursive_scan_component(s : &str) -> Option<PathComponent>{
@@ -136,7 +137,7 @@ fn get_glob_component(s : &str) -> Option<PathComponent>{
     }
 }
 
-pub fn get_constant_component_value(constant_component: &PathComponent) -> String {
+pub fn get_constant_component_value(constant_component: &PathComponent) -> PathBuf {
     match constant_component{
         PathComponent::Constant(s) => s.to_owned(),
         _ => panic!()
@@ -181,7 +182,7 @@ mod tests {
 
     #[test]
     fn basic_parse_path_test() {
-        let task = build_task_from_path("/home/user/**5/??[!qwe]");
+        let task = build_task("/home/user/**5/??[!qwe]");
         assert_eq!(task.path_prefix, "/home/user");
         assert_recursive_scan_component(&task.current_component, 5);
         assert_eq!(task.remaining_components.len(), 1);
@@ -190,7 +191,7 @@ mod tests {
 
     #[test]
     fn default_glob_depth_test() {
-        let task = build_task_from_path("/**");
+        let task = build_task("/**");
         assert_eq!(task.path_prefix, "");
         assert_recursive_scan_component(&task.current_component, 3);
         assert_eq!(task.remaining_components.len(), 0);

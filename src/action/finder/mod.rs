@@ -28,3 +28,9 @@ mod request;
 mod glob_to_regex;
 mod expand_groups;
 mod path;
+
+// Life of a path:
+// - in the input proto FileFinderArgs::paths are `String`.
+// - path groups are expanded - the type is still a `String`
+// - path is converted to `Task`, in which the constant part of the path is
+//   stored as a `PathBuf`, glob parts are stored as a `Regex`.
