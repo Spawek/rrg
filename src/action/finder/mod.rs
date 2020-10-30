@@ -18,9 +18,9 @@
 //! Compontents:
 //! - `action.rs` defines a handler and covers the main functionality.
 //! - `request.rs` parses protobuf request to the internal representation.
-//! - `glob` converts glob expressions to `regex::Regex`.
-//! - `groups` resolves paths alternatives.
-//! - `task` parses paths to internal representation.
+//! - `glob.rs` converts glob expressions to `regex::Regex`.
+//! - `groups.rs` resolves paths alternatives.
+//! - `task.rs` parses paths to internal representation.
 
 pub mod action;
 
