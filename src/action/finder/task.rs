@@ -70,12 +70,10 @@ pub fn build_task(path: &str) -> Task {
     }
 
     // adds the root dir // TODO: rethink this comment
-    let mut components : Vec<PathComponent> = vec![PathComponent::Constant(PathBuf::default())];  // TODO: is it needed actually
-    components.extend(
-        path.split("/").into_iter()  // // TODO: support different OS separators
+    let mut components : Vec<PathComponent> = vec![PathComponent::Constant(PathBuf::from("/"))];  // TODO: is it needed actually
+    components.extend(path.split("/").into_iter()  // // TODO: support different OS separators
         .filter(|x| !x.is_empty())
-        .map(get_path_component)
-        .collect());
+        .map(get_path_component));
 
     build_task_from_components(fold_constant_components(components))
 }
@@ -151,8 +149,7 @@ pub fn fold_constant_components(components: Vec<PathComponent>) -> Vec<PathCompo
             let prev_last = ret.swap_remove(ret.len() - 1);
             ret.push(PathComponent::Constant(
                 get_constant_component_value(&prev_last)
-                + "/"
-                + &get_constant_component_value(&c)));  // TODO: set "/" to proper value
+                    .join(&get_constant_component_value(&c))));
         }
         else {
             ret.push(c.clone());
@@ -183,7 +180,7 @@ mod tests {
     #[test]
     fn basic_parse_path_test() {
         let task = build_task("/home/user/**5/??[!qwe]");
-        assert_eq!(task.path_prefix, "/home/user");
+        assert_eq!(task.path_prefix, PathBuf::from("/home/user"));
         assert_recursive_scan_component(&task.current_component, 5);
         assert_eq!(task.remaining_components.len(), 1);
         assert_glob_component(&task.remaining_components[0], "^..[^qwe]$");
@@ -192,7 +189,7 @@ mod tests {
     #[test]
     fn default_glob_depth_test() {
         let task = build_task("/**");
-        assert_eq!(task.path_prefix, "");
+        assert_eq!(task.path_prefix, PathBuf::from("/"));
         assert_recursive_scan_component(&task.current_component, 3);
         assert_eq!(task.remaining_components.len(), 0);
     }

@@ -21,7 +21,7 @@ use crate::action::finder::expand_groups::expand_groups;
 use super::request::*;
 use std::fs;
 use regex::Regex;
-use crate::action::finder::path::{PathComponent, build_task, Task, build_task_from_components};
+use crate::action::finder::task::{PathComponent, build_task, Task, build_task_from_components};
 use std::path::{PathBuf, Path};
 
 #[derive(Debug)]

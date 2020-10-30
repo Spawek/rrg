@@ -20,14 +20,14 @@
 //! - `request.rs` parses protobuf request to the internal representation.
 //! - `glob_to_regex.rs` converts glob expressions to `regex::Regex`.
 //! - `expand_groups.rs` resolves paths alternatives.
-//! - `path.rs` parses paths to internal representation.
+//! - `task` parses paths to internal representation.
 
 pub mod action;
 
 mod request;
 mod glob_to_regex;
 mod expand_groups;
-mod path;
+mod task;
 
 // Life of a path:
 // - in the input proto FileFinderArgs::paths are `String`.
