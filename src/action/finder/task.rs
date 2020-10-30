@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use regex::Regex;
-use crate::action::finder::glob_to_regex::glob_to_regex;
+use crate::action::finder::glob::glob_to_regex;
 use std::path::{PathBuf};
 
 /// Part of the path. Paths are split to list of `PathComponent` to make

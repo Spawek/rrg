@@ -17,7 +17,7 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::file_finder_args::XDev;
 use crate::action::finder::request::Action;
 use std::fmt::{Formatter, Display};
-use crate::action::finder::expand_groups::expand_groups;
+use crate::action::finder::groups::expand_groups;
 use super::request::*;
 use std::fs;
 use regex::Regex;
