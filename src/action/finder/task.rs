@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use regex::Regex;
 use crate::action::finder::glob::glob_to_regex;
-use std::path::{PathBuf};
+use std::path::{PathBuf, Path};
 
 /// Part of the path. Paths are split to list of `PathComponent` to make
 /// the processing simpler.
@@ -30,6 +30,37 @@ pub struct Task {
     /// Given example task: `/a/b/c` this part would be empty.
     pub remaining_components : Vec<PathComponent>,
 }
+
+pub struct TaskBuilder {
+    components: Vec<PathComponent>,
+}
+
+impl TaskBuilder {
+    pub fn new() -> TaskBuilder {
+        TaskBuilder { components: vec![] }
+    }
+
+    pub fn add_constant(mut self, path: &Path) -> TaskBuilder {
+        self.components.push(PathComponent::Constant(path.to_path_buf()));
+        self
+    }
+
+    pub fn add_components(mut self, components: Vec<PathComponent>) -> TaskBuilder {
+        self.components.extend(components);
+        self
+    }
+
+    pub fn build(self) -> Task{
+        build_task_from_components(self.components)
+    }
+}
+
+impl From<TaskBuilder> for Task {
+    fn from(builder: TaskBuilder) -> Task {
+        build_task_from_components(builder.components)
+    }
+}
+
 
 pub fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     let folded_components = fold_constant_components(components);

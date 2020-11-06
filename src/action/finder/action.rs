@@ -14,8 +14,9 @@ use super::request::*;
 use crate::action::finder::groups::expand_groups;
 use crate::action::finder::request::Action;
 use crate::action::finder::task::{
-    build_task, build_task_from_components, PathComponent, Task,
+    build_task, build_task_from_components, PathComponent, Task, TaskBuilder,
 };
+use crate::fs::{list_dir, Entry};
 use crate::session::{self, Session};
 use log::info;
 use regex::Regex;
@@ -23,8 +24,7 @@ use rrg_proto::file_finder_args::XDev;
 use rrg_proto::path_spec::PathType;
 use rrg_proto::{FileFinderResult, Hash};
 use std::fmt::{Display, Formatter};
-use std::path::{Path};
-use crate::fs::{Entry, list_dir};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Response {}
@@ -149,7 +149,7 @@ fn resolve_path(path: &str) -> Vec<Entry> {
 fn list_path(path: &Path) -> Vec<Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
-        Err(_) => {return vec![]}  // TODO(spawek): return some kind of error here
+        Err(_) => return vec![], // TODO(spawek): return some kind of error here
     };
 
     // TODO: handle symbolic links etc
@@ -186,16 +186,13 @@ fn resolve_glob_task(regex: &Regex, task_details: &Task) -> TaskResults {
             if task_details.remaining_components.is_empty() {
                 outputs.push(e.clone());
             } else {
-                let mut new_task_components = vec![];
-                new_task_components.push(PathComponent::Constant(
-                    task_details.path_prefix.clone(),
-                ));
-                new_task_components
-                    .push(PathComponent::Constant(relative_path.to_owned()));
-                for x in task_details.remaining_components.clone() {
-                    new_task_components.push(x.clone());
-                }
-                new_tasks.push(build_task_from_components(new_task_components));
+                let new_task = TaskBuilder::new()
+                    .add_constant(&task_details.path_prefix)
+                    .add_constant(&relative_path)
+                    .add_components(task_details.remaining_components.clone())
+                    .build();
+
+                new_tasks.push(new_task);
             }
         }
     }
@@ -247,12 +244,12 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
             outputs: vec![],
         }
     } else {
-        let path = path.canonicalize().unwrap();  // TODO: handle the error
+        let path = path.canonicalize().unwrap(); // TODO: handle the error
         TaskResults {
             new_tasks: vec![],
             outputs: vec![Entry {
                 path: path.to_owned(),
-                metadata: path.metadata().unwrap(),  // TODO: handle the error
+                metadata: path.metadata().unwrap(), // TODO: handle the error
             }],
         }
     }
@@ -278,7 +275,6 @@ fn execute_task(task: Task) -> Vec<Entry> {
         let mut task_results = resolve_task(task);
         tasks.append(&mut task_results.new_tasks);
         outputs.append(&mut task_results.outputs);
-
     }
 
     outputs
@@ -462,7 +458,10 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b").join("c"));
+        assert_eq!(
+            resolved[0].path,
+            tempdir.path().join("a").join("b").join("c")
+        );
     }
 
     #[test]
@@ -487,7 +486,10 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b").join("c"));
+        assert_eq!(
+            resolved[0].path,
+            tempdir.path().join("a").join("b").join("c")
+        );
     }
 
     #[test]
@@ -500,7 +502,10 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b").join("c").join("d"));
+        assert_eq!(
+            resolved[0].path,
+            tempdir.path().join("a").join("b").join("c").join("d")
+        );
     }
 
     #[test]
@@ -513,7 +518,10 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b*[xyz]").join("c"));
+        assert_eq!(
+            resolved[0].path,
+            tempdir.path().join("a").join("b*[xyz]").join("c")
+        );
     }
 
     // TODO: Change FSObject to Łukasz type.
