@@ -24,6 +24,7 @@ pub mod unix;
 ///
 /// This type is very similar to standard `DirEntry` but its `metadata` property
 /// is guaranteed to always be there.
+#[derive(Debug, Clone)]
 pub struct Entry {
     /// A path to the filesystem item.
     pub path: PathBuf,

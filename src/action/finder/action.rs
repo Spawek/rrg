@@ -23,8 +23,11 @@ use rrg_proto::file_finder_args::XDev;
 use rrg_proto::path_spec::PathType;
 use rrg_proto::{FileFinderResult, Hash};
 use std::fmt::{Display, Formatter};
-use std::fs;
 use std::path::{Path, PathBuf};
+use crate::fs::Entry;
+use std::fs::{Metadata, DirEntry};
+use std::io::Error;
+use std::fs;
 
 #[derive(Debug)]
 pub struct Response {}
@@ -128,7 +131,7 @@ pub fn handle<S: Session>(
     //       caching can help
 
     /////////////////// TODO: change tasks into "paths" here so strings are passed to "resolve" function (and it's the one thats testsd)
-    let outputs: Vec<FsObject> = req
+    let outputs: Vec<Entry> = req
         .paths
         .into_iter()
         .flat_map(|ref x| expand_groups(x))
@@ -141,50 +144,42 @@ pub fn handle<S: Session>(
     Ok(())
 }
 
-fn resolve_path(path: &str) -> Vec<FsObject> {
+fn resolve_path(path: &str) -> Vec<Entry> {
     let task = build_task(path);
     execute_task(task)
 }
 
-#[derive(Debug, PartialEq, Clone)]
-enum FsObjectType {
-    Dir,
-    File, // for now everything that is not a Dir is a file
-}
+fn list_path(path: &Path) -> Vec<Entry> {
+    let metadata = match path.metadata() {
+        Ok(v) => v,
+        Err(_) => {return vec![]}  // TODO(spawek): return some kind of error here
+    };
 
-// TODO: get rid of it and use Łukasz structure from fs.rs
-#[derive(Debug, PartialEq, Clone)]
-struct FsObject {
-    object_type: FsObjectType,
-    path: PathBuf,
-}
-
-fn get_objects_in_path(path: &Path) -> Vec<FsObject> {
-    if !std::path::Path::is_dir(path) {
-        if std::path::Path::is_file(path) {
-            return vec![FsObject {
-                path: path.to_owned(),
-                object_type: FsObjectType::File,
-            }];
-        } else {
-            return vec![];
-        }
-        // TODO: support other types? or just switch to the "fs.rs" filetypes.
+    // TODO: handle symbolic links etc
+    if !metadata.is_dir() {
+        return vec![Entry {
+            path: path.to_owned(),
+            metadata,
+        }];
     }
 
     let mut ret = vec![];
     for read in fs::read_dir(path) {
-        for entry in read {
-            let entry = entry.unwrap(); // UNSAFE CALL
-            let entry_type = if entry.file_type().unwrap().is_dir() {
-                FsObjectType::Dir
-            } else {
-                FsObjectType::File
+        for dir_entry in read {
+            let entry = match dir_entry {
+                Ok(dir_entry) => {
+                    match dir_entry.metadata(){
+                        Ok(metadata) => { Entry{path: dir_entry.path(), metadata } }
+                        Err(_) => {
+                            continue;  // TODO(spawek): return some kind of error here
+                        }
+                    }
+                }
+                Err(_) => {
+                    continue;
+                }  // TODO(spawek): return some kind of error here
             };
-            ret.push(FsObject {
-                path: entry.path().to_owned(),
-                object_type: entry_type,
-            });
+            ret.push(entry)
         }
     }
 
@@ -196,16 +191,16 @@ fn get_objects_in_path(path: &Path) -> Vec<FsObject> {
 #[derive(Debug)]
 struct TaskResults {
     new_tasks: Vec<Task>,
-    outputs: Vec<FsObject>, // TODO: poor naming - maybe `outputs`? + make it consistent across the code
+    outputs: Vec<Entry>,
 }
 
 // TODO: change to take path_prefix and remaining components instead of task_details
 fn resolve_glob_task(regex: &Regex, task_details: &Task) -> TaskResults {
     let mut new_tasks = vec![];
     let mut outputs = vec![];
-    for o in get_objects_in_path(&task_details.path_prefix) {
+    for e in list_path(&task_details.path_prefix) {
         let relative_path = std::path::Path::strip_prefix(
-            std::path::Path::new(&o.path),
+            std::path::Path::new(&e.path),
             &task_details.path_prefix,
         )
         .unwrap();
@@ -213,7 +208,7 @@ fn resolve_glob_task(regex: &Regex, task_details: &Task) -> TaskResults {
 
         if regex.is_match(relative_path_str) {
             if task_details.remaining_components.is_empty() {
-                outputs.push(o.clone());
+                outputs.push(e.clone());
             } else {
                 let mut new_task_components = vec![];
                 new_task_components.push(PathComponent::Constant(
@@ -247,8 +242,8 @@ fn resolve_recursive_scan_task(
     new_tasks.push(build_task_from_components(current_dir_task_components));
     println!("pushed new task: {:#?}", new_tasks.last());
 
-    for o in get_objects_in_path(&task_details.path_prefix) {
-        if o.object_type == FsObjectType::Dir {
+    for o in list_path(&task_details.path_prefix) {
+        if o.metadata.is_dir() {
             let mut new_task_components = vec![];
             new_task_components.push(PathComponent::Constant(o.path.clone()));
             if max_depth > &1 {
@@ -276,24 +271,13 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
             outputs: vec![],
         }
     } else {
-        let path = path.canonicalize().unwrap();
-        if path.is_dir() {
-            TaskResults {
-                new_tasks: vec![],
-                outputs: vec![FsObject {
-                    object_type: FsObjectType::Dir,
-                    path: path.to_owned(),
-                }],
-            }
-        } else {
-            TaskResults {
-                new_tasks: vec![],
-                outputs: vec![FsObject {
-                    object_type: FsObjectType::File,
-                    path: path.to_owned(),
-                }],
-            }
-            // TODO: support types other than File and Dir
+        let path = path.canonicalize().unwrap();  // TODO: handle the error
+        TaskResults {
+            new_tasks: vec![],
+            outputs: vec![Entry {
+                path: path.to_owned(),
+                metadata: path.metadata().unwrap(),  // TODO: handle the error
+            }],
         }
     }
 }
@@ -308,7 +292,7 @@ fn resolve_task(task: Task) -> TaskResults {
     }
 }
 
-fn execute_task(task: Task) -> Vec<FsObject> {
+fn execute_task(task: Task) -> Vec<Entry> {
     let mut tasks = vec![task];
     let mut outputs = vec![];
 
@@ -358,13 +342,8 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: request,
-                object_type: FsObjectType::File
-            }
-        );
+        assert_eq!(resolved[0].path, request);
+        assert!(resolved[0].metadata.is_file());
     }
 
     #[test]
@@ -376,13 +355,8 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: request.to_path_buf(),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, request.to_path_buf());
+        assert!(resolved[0].metadata.is_dir());
     }
 
     #[test]
@@ -395,13 +369,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: request,
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, request);
     }
 
     #[test]
@@ -425,13 +393,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("a").join("c"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("a").join("c"));
     }
 
     #[test]
@@ -445,13 +407,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("abbc"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("abbc"));
     }
 
     #[test]
@@ -464,13 +420,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("a").join("b"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b"));
     }
 
     #[test]
@@ -483,13 +433,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("abc").join("123"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("abc").join("123"));
     }
 
     #[test]
@@ -503,13 +447,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("abc"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("abc"));
     }
 
     #[test]
@@ -523,13 +461,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("abc"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("abc"));
     }
 
     #[test]
@@ -544,13 +476,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("abc"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("abc"));
     }
 
     #[test]
@@ -563,13 +489,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("a").join("b").join("c"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b").join("c"));
     }
 
     #[test]
@@ -594,13 +514,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("a").join("b").join("c"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b").join("c"));
     }
 
     #[test]
@@ -613,13 +527,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("a").join("b").join("c").join("d"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b").join("c").join("d"));
     }
 
     #[test]
@@ -632,13 +540,7 @@ mod tests {
         let resolved = resolve_path(request.to_str().unwrap());
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0],
-            FsObject {
-                path: tempdir.path().join("a").join("b*[xyz]").join("c"),
-                object_type: FsObjectType::Dir
-            }
-        );
+        assert_eq!(resolved[0].path, tempdir.path().join("a").join("b*[xyz]").join("c"));
     }
 
     // TODO: Change FSObject to Łukasz type.
