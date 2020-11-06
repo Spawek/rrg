@@ -14,7 +14,7 @@ use super::request::*;
 use crate::action::finder::groups::expand_groups;
 use crate::action::finder::request::Action;
 use crate::action::finder::task::{
-    build_task, build_task_from_components, PathComponent, Task, TaskBuilder,
+    build_task, PathComponent, Task, TaskBuilder,
 };
 use crate::fs::{list_dir, Entry};
 use crate::session::{self, Session};
@@ -170,25 +170,35 @@ struct TaskResults {
     outputs: Vec<Entry>,
 }
 
+fn is_match(regex: &Regex, query: &Path) -> bool {
+    let relative_path = match query.components().last() {
+        Some(v) => v,
+        None => {
+            return false;
+        } // TODO: warn!
+    };
+
+    let relative_path_str = match relative_path.as_os_str().to_str() {
+        Some(v) => v,
+        None => {
+            return false;
+        } // TODO: warn!
+    };
+
+    regex.is_match(relative_path_str)
+}
+
 // TODO: change to take path_prefix and remaining components instead of task_details
-fn resolve_glob_task(regex: &Regex, task_details: &Task) -> TaskResults {
+fn resolve_glob_task(glob: &Regex, task_details: &Task) -> TaskResults {
     let mut new_tasks = vec![];
     let mut outputs = vec![];
     for e in list_path(&task_details.path_prefix) {
-        let relative_path = std::path::Path::strip_prefix(
-            std::path::Path::new(&e.path),
-            &task_details.path_prefix,
-        )
-        .unwrap();
-        let relative_path_str = relative_path.to_str().unwrap(); // TODO: handle an error here
-
-        if regex.is_match(relative_path_str) {
+        if is_match(&glob, &e.path) {
             if task_details.remaining_components.is_empty() {
                 outputs.push(e.clone());
             } else {
                 let new_task = TaskBuilder::new()
-                    .add_constant(&task_details.path_prefix)
-                    .add_constant(&relative_path)
+                    .add_constant(&e.path)
                     .add_components(task_details.remaining_components.clone())
                     .build();
 
@@ -207,27 +217,23 @@ fn resolve_recursive_scan_task(
 ) -> TaskResults {
     let mut new_tasks = vec![];
 
-    let mut current_dir_task_components = vec![];
-    current_dir_task_components
-        .push(PathComponent::Constant(task_details.path_prefix.clone()));
-    current_dir_task_components
-        .extend(task_details.remaining_components.clone());
-    new_tasks.push(build_task_from_components(current_dir_task_components));
-    println!("pushed new task: {:#?}", new_tasks.last());
+    let scan_curr_dir = TaskBuilder::new()
+        .add_constant(&task_details.path_prefix)
+        .add_components(task_details.remaining_components.clone())
+        .build();
+    new_tasks.push(scan_curr_dir);
 
+    // TODO: does it work properly when remaining components are empty? It can add current dir second time
     for o in list_path(&task_details.path_prefix) {
         if o.metadata.is_dir() {
-            let mut new_task_components = vec![];
-            new_task_components.push(PathComponent::Constant(o.path.clone()));
+            let mut subdir_scan = TaskBuilder::new()
+                .add_constant(&o.path);
             if max_depth > &1 {
-                new_task_components.push(PathComponent::RecursiveScan {
-                    max_depth: max_depth - 1,
-                });
+                subdir_scan = subdir_scan.add_recursive_scan(max_depth - 1);
             }
-            new_task_components
-                .extend(task_details.remaining_components.clone());
-            new_tasks.push(build_task_from_components(new_task_components));
-            println!("pushed new task: {:#?}", new_tasks.last());
+            subdir_scan = subdir_scan.add_components(
+                task_details.remaining_components.clone());
+            new_tasks.push(subdir_scan.build());
         }
     }
 

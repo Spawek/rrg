@@ -45,6 +45,12 @@ impl TaskBuilder {
         self
     }
 
+    pub fn add_recursive_scan(mut self, max_depth: i32) -> TaskBuilder {
+        self.components.push(PathComponent::RecursiveScan{max_depth});
+        self
+    }
+
+
     pub fn add_components(mut self, components: Vec<PathComponent>) -> TaskBuilder {
         self.components.extend(components);
         self
@@ -61,8 +67,7 @@ impl From<TaskBuilder> for Task {
     }
 }
 
-
-pub fn build_task_from_components(components: Vec<PathComponent>) -> Task {
+fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     let folded_components = fold_constant_components(components);
 
     // Scan components until an non-const component or the end of path.
@@ -82,7 +87,6 @@ pub fn build_task_from_components(components: Vec<PathComponent>) -> Task {
                 let remaining_components = folded_components[i+1..]
                     .into_iter().map(|x| x.to_owned()).collect();
                 return Task {path_prefix, current_component: v.clone(), remaining_components}
-
             },
         }
     }
