@@ -226,13 +226,12 @@ fn resolve_recursive_scan_task(
     // TODO: does it work properly when remaining components are empty? It can add current dir second time
     for o in list_path(&task_details.path_prefix) {
         if o.metadata.is_dir() {
-            let mut subdir_scan = TaskBuilder::new()
-                .add_constant(&o.path);
+            let mut subdir_scan = TaskBuilder::new().add_constant(&o.path);
             if max_depth > &1 {
                 subdir_scan = subdir_scan.add_recursive_scan(max_depth - 1);
             }
-            subdir_scan = subdir_scan.add_components(
-                task_details.remaining_components.clone());
+            subdir_scan = subdir_scan
+                .add_components(task_details.remaining_components.clone());
             new_tasks.push(subdir_scan.build());
         }
     }
