@@ -23,11 +23,8 @@ use rrg_proto::file_finder_args::XDev;
 use rrg_proto::path_spec::PathType;
 use rrg_proto::{FileFinderResult, Hash};
 use std::fmt::{Display, Formatter};
-use std::path::{Path, PathBuf};
-use crate::fs::Entry;
-use std::fs::{Metadata, DirEntry};
-use std::io::Error;
-use std::fs;
+use std::path::{Path};
+use crate::fs::{Entry, list_dir};
 
 #[derive(Debug)]
 pub struct Response {}
@@ -163,29 +160,8 @@ fn list_path(path: &Path) -> Vec<Entry> {
         }];
     }
 
-    let mut ret = vec![];
-    for read in fs::read_dir(path) {
-        for dir_entry in read {
-            let entry = match dir_entry {
-                Ok(dir_entry) => {
-                    match dir_entry.metadata(){
-                        Ok(metadata) => { Entry{path: dir_entry.path(), metadata } }
-                        Err(_) => {
-                            continue;  // TODO(spawek): return some kind of error here
-                        }
-                    }
-                }
-                Err(_) => {
-                    continue;
-                }  // TODO(spawek): return some kind of error here
-            };
-            ret.push(entry)
-        }
-    }
-
-    println!("FS scan of: {:#?} results: {:#?}", &path, &ret);
-
-    ret
+    // TODO: handle error here
+    list_dir(path).unwrap().collect()
 }
 
 #[derive(Debug)]
@@ -298,21 +274,18 @@ fn execute_task(task: Task) -> Vec<Entry> {
 
     while !tasks.is_empty() {
         let task = tasks.swap_remove(tasks.len() - 1);
-        println!("--> Working on task: {:?}", &task);
 
         let mut task_results = resolve_task(task);
         tasks.append(&mut task_results.new_tasks);
         outputs.append(&mut task_results.outputs);
 
-        println!("--> finished task");
     }
 
-    println!("\n!!!resolved path to: {:#?}\n", &outputs);
     outputs
 }
 
 impl super::super::Response for Response {
-    const RDF_NAME: Option<&'static str> = Some("FileFinderResult"); // ???
+    const RDF_NAME: Option<&'static str> = Some("FileFinderResult");
 
     type Proto = FileFinderResult;
 

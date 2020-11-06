@@ -33,7 +33,6 @@ pub struct Task {
 
 pub fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     let folded_components = fold_constant_components(components);
-    println!("folded components: {:?}", folded_components);
 
     // Scan components until an non-const component or the end of path.
     let mut path_prefix = PathBuf::default();
