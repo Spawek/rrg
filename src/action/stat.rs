@@ -25,11 +25,11 @@ use crate::session::{self, Session};
 #[derive(Debug)]
 pub struct Request {
     /// A path to the file to stat.
-    path: PathBuf,
+    pub path: PathBuf,
     /// Whether to collect extended file attributes.
-    collect_ext_attrs: bool,
+    pub collect_ext_attrs: bool,
     /// Whether, in case of a symlink, to collect data about the linked file.
-    follow_symlink: bool,
+    pub follow_symlink: bool,
 }
 
 impl Request {
@@ -112,11 +112,7 @@ impl From<Error> for session::Error {
     }
 }
 
-/// Handles requests for the file stat action.
-pub fn handle<S>(session: &mut S, request: Request) -> session::Result<()>
-where
-    S: Session,
-{
+pub fn stat(request: &Request) -> session::Result<Response> {
     let metadata = if request.follow_symlink {
         std::fs::metadata(&request.path)
     } else {
@@ -133,14 +129,14 @@ where
     };
 
     #[cfg(target_family = "unix")]
-    let ext_attrs = if request.collect_ext_attrs {
+        let ext_attrs = if request.collect_ext_attrs {
         ext_attrs(&request)
     } else {
         vec!()
     };
 
     #[cfg(target_os = "linux")]
-    let flags_linux = if !metadata.file_type().is_symlink() {
+        let flags_linux = if !metadata.file_type().is_symlink() {
         ack! {
             crate::fs::linux::flags(&request.path),
             warn: "failed to collect flags for '{}'", request.path.display()
@@ -152,17 +148,23 @@ where
         None
     };
 
-    let response = Response {
-        path: request.path,
+    Ok(Response {
+        path: request.path.clone(),
         metadata: metadata,
         symlink: symlink,
         #[cfg(target_family = "unix")]
         ext_attrs: ext_attrs,
         #[cfg(target_os = "linux")]
         flags_linux: flags_linux,
-    };
+    })
+}
 
-    session.reply(response)?;
+/// Handles requests for the file stat action.
+pub fn handle<S>(session: &mut S, request: Request) -> session::Result<()>
+where
+    S: Session,
+{
+    session.reply(stat(&request)?)?;
 
     Ok(())
 }

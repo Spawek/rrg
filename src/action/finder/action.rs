@@ -23,12 +23,34 @@ use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
 use rrg_proto::path_spec::PathType;
-use rrg_proto::{FileFinderResult, Hash};
+use rrg_proto::FileFinderResult;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+use crate::action::stat::{Request as StatRequest, Response as StatEntry, stat};
 
 #[derive(Debug)]
-pub struct Response {}
+pub enum Response {
+    Stat(StatEntry),
+}
+
+impl super::super::Response for Response {
+    const RDF_NAME: Option<&'static str> = Some("FileFinderResult");
+
+    type Proto = FileFinderResult;
+
+    fn into_proto(self) -> FileFinderResult {
+        match self {
+            Response::Stat(stat) => {
+                FileFinderResult {
+                    hash_entry: None,
+                    matches: vec![],
+                    stat_entry: Some(stat.into_proto()),
+                    transferred_file: None,
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 struct UnsupportedRequestError {
@@ -109,8 +131,30 @@ pub fn handle<S: Session>(
         return Ok(());
     }
 
+    // TODO: path must be absolute
+    // TODO: by default everything is case insensitive
+    // TODO: support unicode and non-unicode characters
+    // TODO: it would be nice if 1 dir is not scanned twice in the same search - even if paths are overlapping
+    //       caching can help
+
+    let outputs: Vec<Entry> = req
+        .paths
+        .into_iter()
+        .flat_map(|ref x| expand_groups(x))
+        .flat_map(|ref x| resolve_path(x))
+        .collect();
+
     match req.action.unwrap() {
-        Action::Stat(_) => {}
+        Action::Stat(config) => {
+            for e in outputs {
+                let entry_stat = stat(&StatRequest{
+                    path: e.path,
+                    collect_ext_attrs: config.collect_ext_attrs,
+                    follow_symlink: req.follow_links
+                })?;
+                session.reply(Response::Stat(entry_stat))?;
+            }
+        }
         Action::Hash(_) => {
             return Err(UnsupportedRequestError::new(
                 "Hash action is not supported".to_string(),
@@ -122,21 +166,7 @@ pub fn handle<S: Session>(
             ))
         }
     }
-    // TODO: path must be absolute
-    // TODO: by default everything is case insensitive
-    // TODO: support unicode and non-unicode characters
-    // TODO: it would be nice if 1 dir is not scanned twice in the same search - even if paths are overlapping
-    //       caching can help
 
-    /////////////////// TODO: change tasks into "paths" here so strings are passed to "resolve" function (and it's the one thats testsd)
-    let _outputs: Vec<Entry> = req
-        .paths
-        .into_iter()
-        .flat_map(|ref x| expand_groups(x))
-        .flat_map(|ref x| resolve_path(x))
-        .collect();
-
-    session.reply(Response {})?;
     Ok(())
 }
 
@@ -325,24 +355,6 @@ fn execute_task(task: Task) -> Vec<Entry> {
     }
 
     outputs
-}
-
-impl super::super::Response for Response {
-    const RDF_NAME: Option<&'static str> = Some("FileFinderResult");
-
-    type Proto = FileFinderResult;
-
-    fn into_proto(self) -> FileFinderResult {
-        FileFinderResult {
-            hash_entry: Some(Hash {
-                sha256: Some(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), // TODO: just a test
-                ..Default::default()
-            }),
-            matches: vec![],
-            stat_entry: None,
-            transferred_file: None,
-        }
-    }
 }
 
 #[cfg(test)]
