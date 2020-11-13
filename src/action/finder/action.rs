@@ -129,14 +129,12 @@ pub fn handle<S: Session>(
     //       caching can help
 
     /////////////////// TODO: change tasks into "paths" here so strings are passed to "resolve" function (and it's the one thats testsd)
-    let outputs: Vec<Entry> = req
+    let _outputs: Vec<Entry> = req
         .paths
         .into_iter()
         .flat_map(|ref x| expand_groups(x))
         .flat_map(|ref x| resolve_path(x))
         .collect();
-
-    println!("resolved paths to: {:#?}", &outputs);
 
     session.reply(Response {})?;
     Ok(())
@@ -150,7 +148,11 @@ fn resolve_path(path: &str) -> Vec<Entry> {
 fn list_path(path: &Path) -> Vec<Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
-        Err(_) => return vec![], // TODO(spawek): return some kind of error here
+        Err(err) =>
+            {
+                warn!("failed to stat '{}': {}", path.display(), err);
+                return vec![];
+            }
     };
 
     // TODO: handle symbolic links etc
@@ -161,8 +163,13 @@ fn list_path(path: &Path) -> Vec<Entry> {
         }];
     }
 
-    // TODO: handle error here
-    list_dir(path).unwrap().collect()
+    match list_dir(path) {
+        Ok(v) => v.collect(),
+        Err(err) => {
+            warn!("listing directory '{}' failed :{}", path.display(), err);
+            vec![]
+        }
+    }
 }
 
 #[derive(Debug)]
