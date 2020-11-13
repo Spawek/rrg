@@ -16,6 +16,9 @@ use crate::action::finder::request::Action;
 use crate::action::finder::task::{
     build_task, PathComponent, Task, TaskBuilder,
 };
+use crate::action::stat::{
+    stat, Request as StatRequest, Response as StatEntry,
+};
 use crate::fs::{list_dir, Entry};
 use crate::session::{self, Session};
 use log::info;
@@ -26,7 +29,6 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::FileFinderResult;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
-use crate::action::stat::{Request as StatRequest, Response as StatEntry, stat};
 
 #[derive(Debug)]
 pub enum Response {
@@ -40,14 +42,12 @@ impl super::super::Response for Response {
 
     fn into_proto(self) -> FileFinderResult {
         match self {
-            Response::Stat(stat) => {
-                FileFinderResult {
-                    hash_entry: None,
-                    matches: vec![],
-                    stat_entry: Some(stat.into_proto()),
-                    transferred_file: None,
-                }
-            }
+            Response::Stat(stat) => FileFinderResult {
+                hash_entry: None,
+                matches: vec![],
+                stat_entry: Some(stat.into_proto()),
+                transferred_file: None,
+            },
         }
     }
 }
@@ -147,10 +147,11 @@ pub fn handle<S: Session>(
     match req.action.unwrap() {
         Action::Stat(config) => {
             for e in outputs {
-                let entry_stat = stat(&StatRequest{
+                let entry_stat = stat(&StatRequest {
+                    // TODO: think if I really want to use it - it does "stat" the file again
                     path: e.path,
                     collect_ext_attrs: config.collect_ext_attrs,
-                    follow_symlink: req.follow_links
+                    follow_symlink: req.follow_links,
                 })?;
                 session.reply(Response::Stat(entry_stat))?;
             }
@@ -170,19 +171,72 @@ pub fn handle<S: Session>(
     Ok(())
 }
 
-fn resolve_path(path: &str) -> Vec<Entry> {
+fn resolve_path(path: &str) -> ResolvePath {
     let task = build_task(path);
-    execute_task(task)
+    ResolvePath {
+        outputs: vec![],
+        tasks: vec![task],
+    }
+}
+
+struct ResolvePath {
+    // Results buffered to be returned.
+    outputs: Vec<Entry>,
+    // Remaining tasks to be executed.
+    tasks: Vec<Task>,
+}
+
+impl std::iter::Iterator for ResolvePath {
+    type Item = Entry;
+
+    fn next(&mut self) -> Option<Entry> {
+        loop {
+            match self.outputs.pop() {
+                Some(v) => {
+                    return Some(v);
+                }
+                None => {}
+            }
+
+            let task = match self.tasks.pop() {
+                Some(task) => task,
+                None => {
+                    return None;
+                }
+            };
+
+            let mut task_results = resolve_task(task);
+            self.tasks.append(&mut task_results.new_tasks);
+            self.outputs.append(&mut task_results.outputs);
+        }
+    }
+}
+
+fn resolve_task(task: Task) -> TaskResults {
+    match &task.current_component {
+        PathComponent::Constant(path) => resolve_constant_task(path),
+        PathComponent::Glob(regex) => resolve_glob_task(
+            regex,
+            &task.path_prefix,
+            &task.remaining_components,
+        ),
+        PathComponent::RecursiveScan { max_depth } => {
+            resolve_recursive_scan_task(
+                max_depth,
+                &task.path_prefix,
+                &task.remaining_components,
+            )
+        }
+    }
 }
 
 fn list_path(path: &Path) -> Vec<Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
-        Err(err) =>
-            {
-                warn!("failed to stat '{}': {}", path.display(), err);
-                return vec![];
-            }
+        Err(err) => {
+            warn!("failed to stat '{}': {}", path.display(), err);
+            return vec![];
+        }
     };
 
     // TODO: handle symbolic links etc
@@ -324,39 +378,6 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
     ret
 }
 
-fn resolve_task(task: Task) -> TaskResults {
-    match &task.current_component {
-        PathComponent::Constant(path) => resolve_constant_task(path),
-        PathComponent::Glob(regex) => resolve_glob_task(
-            regex,
-            &task.path_prefix,
-            &task.remaining_components,
-        ),
-        PathComponent::RecursiveScan { max_depth } => {
-            resolve_recursive_scan_task(
-                max_depth,
-                &task.path_prefix,
-                &task.remaining_components,
-            )
-        }
-    }
-}
-
-fn execute_task(task: Task) -> Vec<Entry> {
-    let mut tasks = vec![task];
-    let mut outputs = vec![];
-
-    while !tasks.is_empty() {
-        let task = tasks.swap_remove(tasks.len() - 1);
-
-        let mut task_results = resolve_task(task);
-        tasks.append(&mut task_results.new_tasks);
-        outputs.append(&mut task_results.outputs);
-    }
-
-    outputs
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,7 +388,8 @@ mod tests {
         std::fs::write(tempdir.path().join("a"), "").unwrap();
 
         let request = tempdir.path().join("a");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, request);
@@ -380,7 +402,8 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a")).unwrap();
 
         let request = tempdir.path();
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, request.to_path_buf());
@@ -394,7 +417,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("a");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, request);
@@ -405,7 +429,8 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
 
         let request = tempdir.path().join("abc");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 0);
     }
@@ -418,7 +443,8 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("a").join("c")).unwrap();
 
         let request = tempdir.path().join("a").join("b").join("..").join("c");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("a").join("c"));
@@ -432,7 +458,8 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("xbbc")).unwrap();
 
         let request = tempdir.path().join("a*c");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abbc"));
@@ -445,7 +472,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("*").join("*");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("a").join("b"));
@@ -458,7 +486,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("*").join("123");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc").join("123"));
@@ -472,7 +501,8 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("xbc")).unwrap();
 
         let request = tempdir.path().join("ab[c]");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc"));
@@ -486,7 +516,8 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("abe")).unwrap();
 
         let request = tempdir.path().join("ab[!de]");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc"));
@@ -501,7 +532,8 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("ac")).unwrap();
 
         let request = tempdir.path().join("a?c");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc"));
@@ -514,7 +546,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**").join("c");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
@@ -530,7 +563,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**1").join("c");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 0);
     }
@@ -542,7 +576,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**2").join("c");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
@@ -558,7 +593,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**").join("..").join("c").join("d");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
@@ -574,7 +610,8 @@ mod tests {
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("a").join("*").join("c");
-        let resolved = resolve_path(request.to_str().unwrap());
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
