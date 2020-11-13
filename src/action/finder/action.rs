@@ -25,8 +25,7 @@ use rrg_proto::file_finder_args::XDev;
 use rrg_proto::path_spec::PathType;
 use rrg_proto::{FileFinderResult, Hash};
 use std::fmt::{Display, Formatter};
-use std::io::Error;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Response {}
