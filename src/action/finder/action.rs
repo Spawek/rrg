@@ -529,8 +529,6 @@ mod tests {
         );
     }
 
-    // TODO: Change FSObject to Łukasz type.
-
     // TODO: alternatives tests  // must be done on request level (testing using resolve_path can't cover it)
     // TODO: change Path inner type to std::path::Path
     // TODO: test with 2 paths reaching identical element
