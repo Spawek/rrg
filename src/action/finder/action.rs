@@ -19,12 +19,14 @@ use crate::action::finder::task::{
 use crate::fs::{list_dir, Entry};
 use crate::session::{self, Session};
 use log::info;
+use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
 use rrg_proto::path_spec::PathType;
 use rrg_proto::{FileFinderResult, Hash};
 use std::fmt::{Display, Formatter};
-use std::path::Path;
+use std::io::Error;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct Response {}
@@ -174,7 +176,10 @@ fn last_component_matches(regex: &Regex, path: &Path) -> bool {
     let last_component = match path.components().last() {
         Some(v) => v,
         None => {
-            warn!("failed to fetch last component from path: {}", path);
+            warn!(
+                "failed to fetch last component from path: {}",
+                path.display()
+            );
             return false;
         }
     };
@@ -183,7 +188,8 @@ fn last_component_matches(regex: &Regex, path: &Path) -> bool {
         Some(v) => v,
         None => {
             warn!(
-                "failed to convert path to string: {}", last_component
+                "failed to convert last component of the path to string: {}",
+                path.display()
             );
             return false;
         }
@@ -192,20 +198,22 @@ fn last_component_matches(regex: &Regex, path: &Path) -> bool {
     regex.is_match(last_component)
 }
 
-// TODO: change to take path_prefix and remaining components instead of task_details
-fn resolve_glob_task(glob: &Regex, task_details: &Task) -> TaskResults {
+fn resolve_glob_task(
+    glob: &Regex,
+    path_prefix: &Path,
+    remaining_components: &Vec<PathComponent>,
+) -> TaskResults {
     let mut new_tasks = vec![];
     let mut outputs = vec![];
-    for e in list_path(&task_details.path_prefix) {
+    for e in list_path(&path_prefix) {
         if last_component_matches(&glob, &e.path) {
-            if task_details.remaining_components.is_empty() {
+            if remaining_components.is_empty() {
                 outputs.push(e.clone());
             } else {
                 let new_task = TaskBuilder::new()
                     .add_constant(&e.path)
-                    .add_components(task_details.remaining_components.clone())
+                    .add_components(remaining_components.clone())
                     .build();
-
                 new_tasks.push(new_task);
             }
         }
@@ -214,28 +222,28 @@ fn resolve_glob_task(glob: &Regex, task_details: &Task) -> TaskResults {
     TaskResults { new_tasks, outputs }
 }
 
-// TODO: change to take path_prefix and remaining components instead of task_details
 fn resolve_recursive_scan_task(
     max_depth: &i32,
-    task_details: &Task,
+    path_prefix: &Path,
+    remaining_components: &Vec<PathComponent>,
 ) -> TaskResults {
     let mut new_tasks = vec![];
 
     let scan_curr_dir = TaskBuilder::new()
-        .add_constant(&task_details.path_prefix)
-        .add_components(task_details.remaining_components.clone())
+        .add_constant(&path_prefix)
+        .add_components(remaining_components.clone())
         .build();
     new_tasks.push(scan_curr_dir);
 
     // TODO: does it work properly when remaining components are empty? It can add current dir second time
-    for o in list_path(&task_details.path_prefix) {
-        if o.metadata.is_dir() {
-            let mut subdir_scan = TaskBuilder::new().add_constant(&o.path);
+    for e in list_path(&path_prefix) {
+        if e.metadata.is_dir() {
+            let mut subdir_scan = TaskBuilder::new().add_constant(&e.path);
             if max_depth > &1 {
                 subdir_scan = subdir_scan.add_recursive_scan(max_depth - 1);
             }
-            subdir_scan = subdir_scan
-                .add_components(task_details.remaining_components.clone());
+            subdir_scan =
+                subdir_scan.add_components(remaining_components.clone());
             new_tasks.push(subdir_scan.build());
         }
     }
@@ -247,29 +255,53 @@ fn resolve_recursive_scan_task(
 }
 
 fn resolve_constant_task(path: &Path) -> TaskResults {
+    let mut ret = TaskResults {
+        new_tasks: vec![],
+        outputs: vec![],
+    };
+
     if !path.exists() {
-        TaskResults {
-            new_tasks: vec![],
-            outputs: vec![],
-        }
-    } else {
-        let path = path.canonicalize().unwrap(); // TODO: handle the error
-        TaskResults {
-            new_tasks: vec![],
-            outputs: vec![Entry {
-                path: path.to_owned(),
-                metadata: path.metadata().unwrap(), // TODO: handle the error
-            }],
-        }
+        return ret;
     }
+
+    let metadata = match path.metadata() {
+        Ok(v) => v,
+        Err(err) => {
+            warn!("failed to stat '{}': {}", path.display(), err);
+            return ret;
+        }
+    };
+
+    let canonicalized_path = match path.canonicalize() {
+        Ok(v) => v,
+        Err(err) => {
+            warn!("failed canonicalize '{}': {}", path.display(), err);
+            return ret;
+        }
+    };
+
+    ret.outputs.push(Entry {
+        path: canonicalized_path,
+        metadata,
+    });
+
+    ret
 }
 
 fn resolve_task(task: Task) -> TaskResults {
     match &task.current_component {
-        PathComponent::Constant(ref c) => resolve_constant_task(c),
-        PathComponent::Glob(ref regex) => resolve_glob_task(regex, &task),
+        PathComponent::Constant(path) => resolve_constant_task(path),
+        PathComponent::Glob(regex) => resolve_glob_task(
+            regex,
+            &task.path_prefix,
+            &task.remaining_components,
+        ),
         PathComponent::RecursiveScan { max_depth } => {
-            resolve_recursive_scan_task(max_depth, &task)
+            resolve_recursive_scan_task(
+                max_depth,
+                &task.path_prefix,
+                &task.remaining_components,
+            )
         }
     }
 }
