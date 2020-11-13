@@ -170,22 +170,26 @@ struct TaskResults {
     outputs: Vec<Entry>,
 }
 
-fn is_match(regex: &Regex, query: &Path) -> bool {
-    let relative_path = match query.components().last() {
+fn last_component_matches(regex: &Regex, path: &Path) -> bool {
+    let last_component = match path.components().last() {
         Some(v) => v,
         None => {
+            warn!("failed to fetch last component from path: {}", path);
             return false;
-        } // TODO: warn!
+        }
     };
 
-    let relative_path_str = match relative_path.as_os_str().to_str() {
+    let last_component = match last_component.as_os_str().to_str() {
         Some(v) => v,
         None => {
+            warn!(
+                "failed to convert path to string: {}", last_component
+            );
             return false;
-        } // TODO: warn!
+        }
     };
 
-    regex.is_match(relative_path_str)
+    regex.is_match(last_component)
 }
 
 // TODO: change to take path_prefix and remaining components instead of task_details
@@ -193,7 +197,7 @@ fn resolve_glob_task(glob: &Regex, task_details: &Task) -> TaskResults {
     let mut new_tasks = vec![];
     let mut outputs = vec![];
     for e in list_path(&task_details.path_prefix) {
-        if is_match(&glob, &e.path) {
+        if last_component_matches(&glob, &e.path) {
             if task_details.remaining_components.is_empty() {
                 outputs.push(e.clone());
             } else {
