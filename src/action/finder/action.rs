@@ -148,11 +148,11 @@ pub fn handle<S: Session>(
         Action::Stat(config) => {
             for e in outputs {
                 let entry_stat = stat(&StatRequest {
-                    // TODO: think if I really want to use it - it does "stat" the file again
                     path: e.path,
                     collect_ext_attrs: config.collect_ext_attrs,
-                    follow_symlink: req.follow_links,
+                    follow_symlink: config.resolve_links,
                 })?;
+
                 session.reply(Response::Stat(entry_stat))?;
             }
         }
@@ -171,7 +171,7 @@ pub fn handle<S: Session>(
     Ok(())
 }
 
-fn resolve_path(path: &str) -> ResolvePath {
+fn resolve_path(path: &str) -> impl Iterator<Item = Entry> {
     let task = build_task(path);
     ResolvePath {
         outputs: vec![],
@@ -230,6 +230,7 @@ fn resolve_task(task: Task) -> TaskResults {
     }
 }
 
+// TODO: change it to iterator
 fn list_path(path: &Path) -> Vec<Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
@@ -325,17 +326,17 @@ fn resolve_recursive_scan_task(
         .build();
     new_tasks.push(scan_curr_dir);
 
-    // TODO: does it work properly when remaining components are empty? It can add current dir second time
     for e in list_path(&path_prefix) {
-        if e.metadata.is_dir() {
-            let mut subdir_scan = TaskBuilder::new().add_constant(&e.path);
-            if max_depth > &1 {
-                subdir_scan = subdir_scan.add_recursive_scan(max_depth - 1);
-            }
-            subdir_scan =
-                subdir_scan.add_components(remaining_components.clone());
-            new_tasks.push(subdir_scan.build());
+        if !e.metadata.is_dir() {
+            continue;
         }
+
+        let mut subdir_scan = TaskBuilder::new().add_constant(&e.path);
+        if max_depth > &1 {
+            subdir_scan = subdir_scan.add_recursive_scan(max_depth - 1);
+        }
+        subdir_scan = subdir_scan.add_components(remaining_components.clone());
+        new_tasks.push(subdir_scan.build());
     }
 
     TaskResults {
@@ -362,16 +363,8 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
         }
     };
 
-    let canonicalized_path = match path.canonicalize() {
-        Ok(v) => v,
-        Err(err) => {
-            warn!("failed canonicalize '{}': {}", path.display(), err);
-            return ret;
-        }
-    };
-
     ret.outputs.push(Entry {
-        path: canonicalized_path,
+        path: path.to_owned(),
         metadata,
     });
 
@@ -447,7 +440,7 @@ mod tests {
             resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, tempdir.path().join("a").join("c"));
+        assert_eq!(resolved[0].path, request);
     }
 
     #[test]
@@ -570,6 +563,23 @@ mod tests {
     }
 
     #[test]
+    fn test_glob_recurse_at_the_end_of_the_path() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tempdir.path().join("a")).unwrap();
+
+        let request = tempdir.path().join("**");
+        let resolved =
+            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().find(|x| x.path == tempdir.path()).is_some());
+        assert!(resolved
+            .iter()
+            .find(|x| x.path == tempdir.path().join("a"))
+            .is_some());
+    }
+
+    #[test]
     fn test_glob_recurse_max_depth() {
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b").join("c").join("d");
@@ -589,17 +599,17 @@ mod tests {
     #[test]
     fn test_glob_recurse_and_parent_component_in_path() {
         let tempdir = tempfile::tempdir().unwrap();
-        let path = tempdir.path().join("a").join("b").join("c").join("d");
+        let path = tempdir.path().join("a").join("b");
         std::fs::create_dir_all(path).unwrap();
 
-        let request = tempdir.path().join("**").join("..").join("c").join("d");
+        let request = tempdir.path().join("**").join("..").join("b");
         let resolved =
             resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
             resolved[0].path,
-            tempdir.path().join("a").join("b").join("c").join("d")
+            tempdir.path().join("a").join("b").join("..").join("b")
         );
     }
 
@@ -618,6 +628,24 @@ mod tests {
             resolved[0].path,
             tempdir.path().join("a").join("b*[xyz]").join("c")
         );
+    }
+
+    #[test]
+    #[cfg(target_family = "unix")]
+    fn test_resolve_symbolic_link_should_not_follow_it() {
+        let tempdir = tempfile::tempdir().unwrap();
+
+        let dir_path = tempdir.path().join("a");
+        std::fs::create_dir(&dir_path).unwrap();
+
+        let symlink_path = tempdir.path().join("b");
+        std::os::unix::fs::symlink(&dir_path, &symlink_path).unwrap();
+
+        let resolved =
+            resolve_path(symlink_path.to_str().unwrap()).collect::<Vec<_>>();
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].path, symlink_path);
     }
 
     // TODO: alternatives tests  // must be done on request level (testing using resolve_path can't cover it)
