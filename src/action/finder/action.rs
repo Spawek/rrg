@@ -141,7 +141,7 @@ pub fn handle<S: Session>(
         .paths
         .into_iter()
         .flat_map(|ref x| expand_groups(x))
-        .flat_map(|ref x| resolve_path(x))
+        .flat_map(|ref x| resolve_path(x, req.follow_links))
         .collect();
 
     match req.action.unwrap() {
@@ -171,8 +171,8 @@ pub fn handle<S: Session>(
     Ok(())
 }
 
-fn resolve_path(path: &str) -> impl Iterator<Item = Entry> {
-    let task = build_task(path);
+fn resolve_path(path: &str, follow_links: bool) -> impl Iterator<Item = Entry> {
+    let task = build_task(path, follow_links);
     ResolvePath {
         outputs: vec![],
         tasks: vec![task],
@@ -198,13 +198,7 @@ impl std::iter::Iterator for ResolvePath {
                 None => {}
             }
 
-            let task = match self.tasks.pop() {
-                Some(task) => task,
-                None => {
-                    return None;
-                }
-            };
-
+            let task = self.tasks.pop()?;
             let mut task_results = resolve_task(task);
             self.tasks.append(&mut task_results.new_tasks);
             self.outputs.append(&mut task_results.outputs);
@@ -225,6 +219,7 @@ fn resolve_task(task: Task) -> TaskResults {
                 max_depth,
                 &task.path_prefix,
                 &task.remaining_components,
+                &task.follow_links,
             )
         }
     }
@@ -317,6 +312,7 @@ fn resolve_recursive_scan_task(
     max_depth: &i32,
     path_prefix: &Path,
     remaining_components: &Vec<PathComponent>,
+    follow_links: &bool,
 ) -> TaskResults {
     let mut new_tasks = vec![];
 
@@ -328,8 +324,14 @@ fn resolve_recursive_scan_task(
 
     for e in list_path(&path_prefix) {
         if !e.metadata.is_dir() {
-            continue;
+            if *follow_links && std::fs::metadata(e.path).unwrap().is_dir(){
+
+            }
+            else{
+                continue;
+            }
         }
+
 
         let mut subdir_scan = TaskBuilder::new().add_constant(&e.path);
         if max_depth > &1 {
@@ -641,6 +643,7 @@ mod tests {
         let symlink_path = tempdir.path().join("b");
         std::os::unix::fs::symlink(&dir_path, &symlink_path).unwrap();
 
+        // TODO_Test with options
         let resolved =
             resolve_path(symlink_path.to_str().unwrap()).collect::<Vec<_>>();
 
