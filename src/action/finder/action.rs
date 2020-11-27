@@ -10,6 +10,37 @@
 //! Tasks are resolved by performing filesystem requests and generating
 //! outputs or adding new tasks to the queue.
 
+// Symbolic links support
+// There are 2 config values describing intended behavior when a symbolic link
+// is in path:
+//   - `follow_links`: described in the FileFinder proto as:
+//     "Should symbolic links be followed in recursive directory listings".
+//   - `stat` action config: `resolve_links`: described in Stat action proto as:
+//     "If true, the action will yield stat information for link targets,
+//      if false, the stat for the link itself will be returned".
+//
+// However a simple test shows that GRR behavior is different than the one
+// intended by `follow_links`. Given a test scenario:
+//   -> `/a/file`
+//   -> `/b/link_to_a` --> symbolic link to `/a`
+// A query: `/b/**/file` (follow_links = false) GRR finds `/b/link_to_a/file`.
+// What's interesting - a query: `/b/**` (follow_links = false) GRR
+// doesn't find the `/b/link_to_a/file`.
+//
+// Filesystem traversal in RRG:
+//   - Always follow links on constant (e.g. `/b/link_to_a/file`) or
+//     glob (e.g. `/b/*/file`) expressions.
+//   - When walking thought the filesystem using recursive search
+//     (e.g. `/b/**/file`) only follow then symbolic link when
+//     `follow_links` is set. The symbolic link itself is also returned if it
+//     matches the query - e.g. a query `/b/**` (follow_links = true) returns:
+//       -> `/b/link_to_a`
+//       -> `/b/link_to_a/file`
+//
+// RRG behavior on symbolic links when executing actions:
+// - `stat` action should follow the link when `resolve_links` is set.
+// - `hash` and `download` actions should follow the links.
+
 use super::request::*;
 use crate::action::finder::groups::expand_groups;
 use crate::action::finder::request::Action;
@@ -29,6 +60,8 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::FileFinderResult;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+use std::fs::{metadata, Metadata};
+use std::io::Error;
 
 #[derive(Debug)]
 pub enum Response {
@@ -108,23 +141,11 @@ pub fn handle<S: Session>(
         ));
     }
 
-    if req.follow_links {
-        return Err(UnsupportedRequestError::new(
-            "follow_links parameter is not supported".to_string(),
-        ));
-    }
-
     if req.xdev_mode != XDev::Local {
         return Err(UnsupportedRequestError::new(format!(
             "unsupported XDev mode: {:?}",
             req.xdev_mode
         )));
-    }
-
-    if req.paths.len() == 0 {
-        return Err(UnsupportedRequestError::new(
-            "at least 1 path must be provided".to_string(),
-        ));
     }
 
     if req.action.is_none() {
@@ -137,11 +158,12 @@ pub fn handle<S: Session>(
     // TODO: it would be nice if 1 dir is not scanned twice in the same search - even if paths are overlapping
     //       caching can help
 
+    let follow_link = req.follow_links;
     let outputs: Vec<Entry> = req
         .paths
         .into_iter()
         .flat_map(|ref x| expand_groups(x))
-        .flat_map(|ref x| resolve_path(x, req.follow_links))
+        .flat_map(|ref x| resolve_path(x, follow_link))
         .collect();
 
     match req.action.unwrap() {
@@ -172,18 +194,21 @@ pub fn handle<S: Session>(
 }
 
 fn resolve_path(path: &str, follow_links: bool) -> impl Iterator<Item = Entry> {
-    let task = build_task(path, follow_links);
+    let task = build_task(path);
     ResolvePath {
         outputs: vec![],
         tasks: vec![task],
+        follow_links,
     }
 }
 
 struct ResolvePath {
-    // Results buffered to be returned.
+    /// Results buffered to be returned.
     outputs: Vec<Entry>,
-    // Remaining tasks to be executed.
+    /// Remaining tasks to be executed.
     tasks: Vec<Task>,
+    /// If true then symbolic links should be followed in recursive scans.
+    follow_links: bool,
 }
 
 impl std::iter::Iterator for ResolvePath {
@@ -199,14 +224,14 @@ impl std::iter::Iterator for ResolvePath {
             }
 
             let task = self.tasks.pop()?;
-            let mut task_results = resolve_task(task);
+            let mut task_results = resolve_task(task, self.follow_links);
             self.tasks.append(&mut task_results.new_tasks);
             self.outputs.append(&mut task_results.outputs);
         }
     }
 }
 
-fn resolve_task(task: Task) -> TaskResults {
+fn resolve_task(task: Task, follow_links: bool) -> TaskResults {
     match &task.current_component {
         PathComponent::Constant(path) => resolve_constant_task(path),
         PathComponent::Glob(regex) => resolve_glob_task(
@@ -216,10 +241,10 @@ fn resolve_task(task: Task) -> TaskResults {
         ),
         PathComponent::RecursiveScan { max_depth } => {
             resolve_recursive_scan_task(
-                max_depth,
+                *max_depth,
                 &task.path_prefix,
                 &task.remaining_components,
-                &task.follow_links,
+                follow_links,
             )
         }
     }
@@ -235,7 +260,6 @@ fn list_path(path: &Path) -> Vec<Entry> {
         }
     };
 
-    // TODO: handle symbolic links etc
     if !metadata.is_dir() {
         return vec![Entry {
             path: path.to_owned(),
@@ -308,42 +332,74 @@ fn resolve_glob_task(
     TaskResults { new_tasks, outputs }
 }
 
+/// Checks if Entry is a directory using the symlink_metadata it contains,
+/// and metadata if `follow_links` is set.
+fn is_dir(e: &Entry, follow_links: bool) -> bool {
+    if e.metadata.is_dir(){
+        return true;
+    }
+
+    if follow_links{
+        match std::fs::metadata(&e.path) {
+            Ok(metadata) => { return metadata.is_dir(); }
+            Err(err) => {
+                warn!("failed to stat '{}': {}", e.path.display(), err);
+                return false;
+            }
+        }
+    }
+
+    return false;
+}
+
 fn resolve_recursive_scan_task(
-    max_depth: &i32,
+    max_depth: i32,
     path_prefix: &Path,
     remaining_components: &Vec<PathComponent>,
-    follow_links: &bool,
+    follow_links: bool,
 ) -> TaskResults {
     let mut new_tasks = vec![];
-
-    let scan_curr_dir = TaskBuilder::new()
-        .add_constant(&path_prefix)
-        .add_components(remaining_components.clone())
-        .build();
-    new_tasks.push(scan_curr_dir);
+    let mut outputs = vec![];
 
     for e in list_path(&path_prefix) {
-        if !e.metadata.is_dir() {
-            if *follow_links && std::fs::metadata(e.path).unwrap().is_dir(){
-
+        if !is_dir(&e, follow_links) {
+            if remaining_components.is_empty() {
+                outputs.push(e.to_owned());
             }
-            else{
-                continue;
-            }
+            continue;
         }
 
+        let scan_curr_dir = TaskBuilder::new()
+            .add_constant(&e.path)
+            .add_components(remaining_components.clone())
+            .build();
+        new_tasks.push(scan_curr_dir);
 
-        let mut subdir_scan = TaskBuilder::new().add_constant(&e.path);
-        if max_depth > &1 {
+        if max_depth > 1 {
+            let mut subdir_scan = TaskBuilder::new().add_constant(&e.path);
             subdir_scan = subdir_scan.add_recursive_scan(max_depth - 1);
+            subdir_scan = subdir_scan.add_components(remaining_components.clone());
+            new_tasks.push(subdir_scan.build());
         }
-        subdir_scan = subdir_scan.add_components(remaining_components.clone());
-        new_tasks.push(subdir_scan.build());
     }
+
+    // // TODO: REMOVE
+    // let ret = TaskResults {
+    //     new_tasks,
+    //     outputs,
+    // };
+    //
+    // println!("\ntask: resolve_recursive_scan_task: max_depth: {}, path_prefix {:?}, remaining_components, {:?}, follow_links: {}", &max_depth, &path_prefix, &remaining_components, &follow_links);
+    // println!("resolved to: new tasks{:#?},", &ret.new_tasks);
+    // for e in &ret.outputs {
+    //     println!("!!!outputs found: {:?}", &e.path);
+    // }
+    //
+    // ret
 
     TaskResults {
         new_tasks,
-        outputs: vec![],
+        outputs,
     }
 }
 
@@ -379,12 +435,13 @@ mod tests {
 
     #[test]
     fn test_constant_path_with_file() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::write(tempdir.path().join("a"), "").unwrap();
 
         let request = tempdir.path().join("a");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, request);
@@ -393,12 +450,13 @@ mod tests {
 
     #[test]
     fn test_constant_path_with_empty_dir() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("a")).unwrap();
 
         let request = tempdir.path();
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, request.to_path_buf());
@@ -407,13 +465,14 @@ mod tests {
 
     #[test]
     fn test_constant_path_with_nonempty_dir() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("a");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, request);
@@ -421,25 +480,27 @@ mod tests {
 
     #[test]
     fn test_constant_path_when_file_doesnt_exist() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
 
         let request = tempdir.path().join("abc");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 0);
     }
 
     #[test]
     fn test_constant_path_containing_parent_directory() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("a")).unwrap();
         std::fs::create_dir(tempdir.path().join("a").join("b")).unwrap();
         std::fs::create_dir(tempdir.path().join("a").join("c")).unwrap();
 
         let request = tempdir.path().join("a").join("b").join("..").join("c");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, request);
@@ -447,14 +508,15 @@ mod tests {
 
     #[test]
     fn test_glob_star() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abbc")).unwrap();
         std::fs::create_dir(tempdir.path().join("abbd")).unwrap();
         std::fs::create_dir(tempdir.path().join("xbbc")).unwrap();
 
         let request = tempdir.path().join("a*c");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abbc"));
@@ -462,13 +524,14 @@ mod tests {
 
     #[test]
     fn test_glob_star_doesnt_return_intermediate_directories() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b").join("c");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("*").join("*");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("a").join("b"));
@@ -476,13 +539,14 @@ mod tests {
 
     #[test]
     fn test_glob_star_followed_by_constant() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("abc").join("123").join("qwe");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("*").join("123");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc").join("123"));
@@ -490,14 +554,15 @@ mod tests {
 
     #[test]
     fn test_glob_selection() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
         std::fs::create_dir(tempdir.path().join("abd")).unwrap();
         std::fs::create_dir(tempdir.path().join("xbc")).unwrap();
 
         let request = tempdir.path().join("ab[c]");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc"));
@@ -505,14 +570,15 @@ mod tests {
 
     #[test]
     fn test_glob_reverse_selection() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
         std::fs::create_dir(tempdir.path().join("abd")).unwrap();
         std::fs::create_dir(tempdir.path().join("abe")).unwrap();
 
         let request = tempdir.path().join("ab[!de]");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc"));
@@ -520,6 +586,7 @@ mod tests {
 
     #[test]
     fn test_glob_wildcard() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         std::fs::create_dir(tempdir.path().join("abc")).unwrap();
         std::fs::create_dir(tempdir.path().join("abd")).unwrap();
@@ -527,8 +594,8 @@ mod tests {
         std::fs::create_dir(tempdir.path().join("ac")).unwrap();
 
         let request = tempdir.path().join("a?c");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].path, tempdir.path().join("abc"));
@@ -536,13 +603,14 @@ mod tests {
 
     #[test]
     fn test_glob_recurse_default_max_depth() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b").join("c").join("d");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**").join("c");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
@@ -553,43 +621,51 @@ mod tests {
 
     #[test]
     fn test_glob_recurse_too_low_max_depth_limit() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b").join("c");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**1").join("c");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 0);
     }
 
     #[test]
     fn test_glob_recurse_at_the_end_of_the_path() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(tempdir.path().join("a")).unwrap();
+        let a = tempdir.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        let file = a.join("file");
+        std::fs::write(&file, "").unwrap();
 
         let request = tempdir.path().join("**");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
+
+        // TEMP:
+        for e in &resolved {
+            println!("!!!found: {:?}", &e.path);
+        }
 
         assert_eq!(resolved.len(), 2);
-        assert!(resolved.iter().find(|x| x.path == tempdir.path()).is_some());
-        assert!(resolved
-            .iter()
-            .find(|x| x.path == tempdir.path().join("a"))
-            .is_some());
+        assert!(resolved.iter().find(|x| x.path == a).is_some());
+        assert!(resolved.iter().find(|x| x.path == file).is_some());
     }
 
     #[test]
     fn test_glob_recurse_max_depth() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b").join("c").join("d");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**2").join("c");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
@@ -600,13 +676,14 @@ mod tests {
 
     #[test]
     fn test_glob_recurse_and_parent_component_in_path() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("**").join("..").join("b");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
@@ -617,13 +694,14 @@ mod tests {
 
     #[test]
     fn test_directory_name_containing_glob_characters() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("a").join("b*[xyz]").join("c");
         std::fs::create_dir_all(path).unwrap();
 
         let request = tempdir.path().join("a").join("*").join("c");
-        let resolved =
-            resolve_path(request.to_str().unwrap()).collect::<Vec<_>>();
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(
@@ -634,21 +712,105 @@ mod tests {
 
     #[test]
     #[cfg(target_family = "unix")]
-    fn test_resolve_symbolic_link_should_not_follow_it() {
+    fn test_resolve_link_in_const_path() {
+        let follow_links = false;
         let tempdir = tempfile::tempdir().unwrap();
 
-        let dir_path = tempdir.path().join("a");
-        std::fs::create_dir(&dir_path).unwrap();
+        let a = tempdir.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::write(a.join("file"), "").unwrap();
 
-        let symlink_path = tempdir.path().join("b");
-        std::os::unix::fs::symlink(&dir_path, &symlink_path).unwrap();
+        let symlink = tempdir.path().join("b");
+        std::os::unix::fs::symlink(&a, &symlink).unwrap();
 
-        // TODO_Test with options
-        let resolved =
-            resolve_path(symlink_path.to_str().unwrap()).collect::<Vec<_>>();
+        {
+            let request = symlink.to_str().unwrap().to_owned();
+            let resolved =
+                resolve_path(&request, follow_links).collect::<Vec<_>>();
+            assert_eq!(resolved.len(), 1);
+            assert_eq!(resolved[0].path, symlink);
+        }
+
+        {
+            let request = symlink.join("file").to_str().unwrap().to_owned();
+            let resolved =
+                resolve_path(&request, follow_links).collect::<Vec<_>>();
+            assert_eq!(resolved.len(), 1);
+            assert_eq!(resolved[0].path, symlink.join("file"));
+        }
+    }
+
+    #[test]
+    #[cfg(target_family = "unix")]
+    fn test_resolve_link_in_glob() {
+        let follow_links = false;
+        let tempdir = tempfile::tempdir().unwrap();
+
+        let a = tempdir.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::write(a.join("file"), "").unwrap();
+
+        let b = tempdir.path().join("b");
+        std::fs::create_dir(&b).unwrap();
+        let symlink = b.join("link_to_a");
+        std::os::unix::fs::symlink(&a, &symlink).unwrap();
+
+        let request = tempdir.path().join("b").join("*").join("file");
+
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].path, symlink.join("file"));
+    }
+
+    #[test]
+    #[cfg(target_family = "unix")]
+    fn test_resolve_link_in_recursive_search_with_no_follow() {
+        let follow_links = false;
+        let tempdir = tempfile::tempdir().unwrap();
+
+        let a = tempdir.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::write(a.join("file"), "").unwrap();
+
+        let b = tempdir.path().join("b");
+        std::fs::create_dir(&b).unwrap();
+        let symlink = b.join("link_to_a");
+        std::os::unix::fs::symlink(&a, &symlink).unwrap();
+
+        let request = b.join("**");
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
 
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].path, symlink_path);
+        assert_eq!(resolved[0].path, symlink);
+    }
+
+    #[test]
+    #[cfg(target_family = "unix")]
+    fn test_resolve_link_in_recursive_search_with_follow() {
+        let follow_links = true;
+        let tempdir = tempfile::tempdir().unwrap();
+
+        let a = tempdir.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::write(a.join("file"), "").unwrap();
+
+        let b = tempdir.path().join("b");
+        std::fs::create_dir(&b).unwrap();
+        let symlink = b.join("link_to_a");
+        std::os::unix::fs::symlink(&a, &symlink).unwrap();
+
+        let request = b.join("**");
+        let resolved = resolve_path(request.to_str().unwrap(), follow_links)
+            .collect::<Vec<_>>();
+
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().find(|x| x.path == symlink).is_some());
+        assert!(resolved
+            .iter()
+            .find(|x| x.path == symlink.join("file"))
+            .is_some());
     }
 
     // TODO: alternatives tests  // must be done on request level (testing using resolve_path can't cover it)
@@ -696,3 +858,106 @@ mod tests {
 
 // TODO: GRR bug: /home/spawek/rrg/**/*toml doesn't find /home/spawek/rrg/Cargo.toml
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
+//
+// // follow links: check cases: (on GRR)
+// // - recursive search going through the link
+// // - glob going through the link
+// // - constant scanning the link
+// /* GRR TESTS
+// 1)
+// /home/spawek/rrg/test/b/link_to_a_file
+// Stat: Resolve links: false
+// Follow links: false
+// RESULT: not resolved
+//
+// 2)
+// /home/spawek/rrg/test/b/link_to_a_file
+// Stat: Resolve links: true
+// Follow links: false
+// RESULT: stats are resolved but path still points at the symlink
+//
+// 3)
+// /home/spawek/rrg/test/b/link_to_a_file/**/file
+// Follow links: false
+// NO RESULTS
+//
+// 4)
+// /home/spawek/rrg/test/b/link_to_a_file/**/file
+// Follow links: true
+// NO RESULTS
+//
+// 5)
+// /home/spawek/rrg/test/b/**/file
+// Follow links: true
+// NO RESULTS
+//
+// 6)
+// /home/spawek/rrg/test/b/**
+// Follow links: true
+// RESULT: only symlink found
+//
+// LINK TO DIR ADDED HERE:
+//
+// 7)
+// /home/spawek/rrg/test/b/**
+// Follow links: true
+// RESULT: (successfully going through the link to dir)
+// /home/spawek/rrg/test/b/link_to_a_dir
+// /home/spawek/rrg/test/b/link_to_a_dir/file
+//
+// 8)
+// /home/spawek/rrg/test/b/**
+// Follow links: false
+// RESULT: not going though the link
+//
+// 9)
+// /home/spawek/rrg/test/b/**/file
+// Follow links: true
+// RESULT:
+// /home/spawek/rrg/test/b/link_to_a_dir/file
+//
+// 10)
+// /home/spawek/rrg/test/b/**/../file
+// Follow links: true
+// RESULT: ".." is cut out of the path
+// /home/spawek/rrg/test/b/link_to_a_dir/file
+//
+// 11)
+// /home/spawek/rrg/test/b/*/file (GLOB)
+// Follow links: true
+// RESULT: found
+// /home/spawek/rrg/test/b/link_to_a_dir/file
+//
+// 12) /home/spawek/rrg/test/b/link_to_a_dir/file (const)
+// Follow links: true
+// RESULT: found
+// /home/spawek/rrg/test/b/link_to_a_dir/file
+//
+// 13) /home/spawek/rrg/test/b/link_to_a_dir/file (const)
+// Follow links: false
+// RESULT: found (?!?)
+//
+// 14)
+// /home/spawek/rrg/test/b/*/file (GLOB)
+// Follow links: false
+// RESULT: found (?!?)
+//
+// 15)
+// /home/spawek/rrg/test/b/**/file
+// Follow links: false
+// RESULT: found (?!?)
+// /home/spawek/rrg/test/b/link_to_a_dir/file
+//
+// 16)
+// /home/spawek/rrg/test/b/**
+// Follow links: false
+// RESULT: NOT FOUND (?!?) /home/spawek/rrg/test/b/link_to_a_dir/file -
+// only links are in the result
+//
+// 16)
+// /home/spawek/rrg/test/b/**/
+// Follow links: false
+// RESULT: NOT FOUND (?!?) /home/spawek/rrg/test/b/link_to_a_dir/file -
+// only links are in the result
+//
+//  */

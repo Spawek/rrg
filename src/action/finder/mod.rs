@@ -28,7 +28,6 @@ pub mod request;
 pub mod glob;
 pub mod groups;
 pub mod task;
-pub mod list;
 
 // Life of a path:
 // - in the input proto FileFinderArgs::paths are `String`.

@@ -12,13 +12,6 @@ pub enum PathComponent {
     RecursiveScan {max_depth: i32},  // glob recursive component - `**` in path
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Options {
-    // pub process_non_regular_files: bool,
-    pub follow_links: bool,
-    // pub xdev_mode: XDevMode,
-}
-
 /// File finder task to be executed.
 #[derive(Debug)]
 pub struct Task {
@@ -36,9 +29,6 @@ pub struct Task {
     /// Given example task: `/a/b/**4/c/d*` this part would be `c/d*`.
     /// Given example task: `/a/b/c` this part would be empty.
     pub remaining_components : Vec<PathComponent>,
-
-    // TODO: comment or wrap in `Options`
-    pub follow_links: bool,
 }
 
 pub struct TaskBuilder {
@@ -104,11 +94,11 @@ fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     Task {
         path_prefix: PathBuf::default(),
         current_component: PathComponent::Constant(path_prefix.to_owned()),
-        remaining_components: vec![]
+        remaining_components: vec![],
     }
 }
 
-pub fn build_task(path: &str, follow_links: bool) -> Task {
+pub fn build_task(path: &str) -> Task {
     if !path.starts_with(&"/") {
         panic!("path must be absolute");  // TODO: throw a meaningful error
     }
