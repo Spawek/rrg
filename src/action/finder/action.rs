@@ -261,7 +261,6 @@ impl std::iter::Iterator for ListPath {
     }
 }
 
-// TODO: change it to iterator
 fn list_path(path: &Path) -> impl Iterator<Item=Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
