@@ -5,10 +5,14 @@
 
 pub mod action;
 pub mod fs;
+pub mod io;
 pub mod message;
 pub mod metadata;
 pub mod opts;
 pub mod session;
+
+// Consider moving these to a separate submodule.
+pub mod chunked;
 pub mod gzchunked;
 
 use crate::opts::{Opts};

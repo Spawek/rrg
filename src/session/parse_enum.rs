@@ -13,7 +13,7 @@ pub trait ProtoEnum<Proto> {
 /// Maps the raw integer value to enum value or returns `ParseError` when
 /// the value cannot be mapped.
 pub fn parse_enum<T: ProtoEnum<T>>(raw_enum_value: Option<i32>)
-                                   -> Result<T, UnknownEnumValueError> {
+    -> Result<T, UnknownEnumValueError> {
     match raw_enum_value {
         Some(int_value) => T::from_i32(int_value).ok_or_else(
             || UnknownEnumValueError {
