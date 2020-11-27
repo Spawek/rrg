@@ -60,6 +60,7 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::FileFinderResult;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+use crate::fs;
 
 #[derive(Debug)]
 pub enum Response {
@@ -244,28 +245,44 @@ fn resolve_task(task: Task, follow_links: bool) -> TaskResults {
     }
 }
 
+enum ListPath {
+    Next(Option<Entry>),
+    ListDir(fs::ListDir),
+}
+
+impl std::iter::Iterator for ListPath {
+    type Item = Entry;
+
+    fn next(&mut self) -> Option<Entry> {
+        match self {
+            ListPath::Next(next) => next.take(),
+            ListPath::ListDir(iter) => iter.next(),
+        }
+    }
+}
+
 // TODO: change it to iterator
-fn list_path(path: &Path) -> Vec<Entry> {
+fn list_path(path: &Path) -> impl Iterator<Item=Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
         Err(err) => {
             warn!("failed to stat '{}': {}", path.display(), err);
-            return vec![];
+            return ListPath::Next(None);
         }
     };
 
     if !metadata.is_dir() {
-        return vec![Entry {
+        ListPath::Next(Some(Entry {
             path: path.to_owned(),
             metadata,
-        }];
+        }));
     }
 
     match list_dir(path) {
-        Ok(v) => v.collect(),
+        Ok(v) => ListPath::ListDir(v),
         Err(err) => {
             warn!("listing directory '{}' failed :{}", path.display(), err);
-            vec![]
+            ListPath::Next(None)
         }
     }
 }
@@ -624,11 +641,6 @@ mod tests {
         let request = tempdir.path().join("**");
         let resolved = resolve_path(request.to_str().unwrap(), follow_links)
             .collect::<Vec<_>>();
-
-        // TEMP:
-        for e in &resolved {
-            println!("!!!found: {:?}", &e.path);
-        }
 
         assert_eq!(resolved.len(), 2);
         assert!(resolved.iter().find(|x| x.path == a).is_some());
