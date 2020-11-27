@@ -146,10 +146,6 @@ pub fn handle<S: Session>(
         )));
     }
 
-    if req.action.is_none() {
-        return Ok(());
-    }
-
     // TODO: path must be absolute
     // TODO: by default everything is case insensitive
     // TODO: support unicode and non-unicode characters
@@ -164,7 +160,7 @@ pub fn handle<S: Session>(
         .flat_map(|ref x| resolve_path(x, follow_link))
         .collect();
 
-    match req.action.unwrap() {
+    match req.action {
         Action::Stat(config) => {
             for e in outputs {
                 let entry_stat = stat(&StatRequest {
@@ -807,10 +803,10 @@ mod tests {
         let request = Request {
             paths: vec!["/home/spaw*/rrg/**1/*toml".to_owned()],
             path_type: PathType::Os,
-            action: Some(Action::Stat(StatActionOptions {
+            action: Action::Stat(StatActionOptions {
                 resolve_links: false,
                 collect_ext_attrs: false,
-            })),
+            }),
             conditions: vec![],
             process_non_regular_files: false,
             follow_links: false,

@@ -23,7 +23,6 @@
 //! - `task.rs` parses paths to internal representation.
 
 pub mod action;
-
 pub mod request;
 pub mod glob;
 pub mod groups;
