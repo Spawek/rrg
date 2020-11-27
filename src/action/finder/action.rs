@@ -60,8 +60,6 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::FileFinderResult;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
-use std::fs::{metadata, Metadata};
-use std::io::Error;
 
 #[derive(Debug)]
 pub enum Response {
@@ -335,13 +333,15 @@ fn resolve_glob_task(
 /// Checks if Entry is a directory using the symlink_metadata it contains,
 /// and metadata if `follow_links` is set.
 fn is_dir(e: &Entry, follow_links: bool) -> bool {
-    if e.metadata.is_dir(){
+    if e.metadata.is_dir() {
         return true;
     }
 
-    if follow_links{
+    if follow_links {
         match std::fs::metadata(&e.path) {
-            Ok(metadata) => { return metadata.is_dir(); }
+            Ok(metadata) => {
+                return metadata.is_dir();
+            }
             Err(err) => {
                 warn!("failed to stat '{}': {}", e.path.display(), err);
                 return false;
@@ -360,7 +360,6 @@ fn resolve_recursive_scan_task(
 ) -> TaskResults {
     let mut new_tasks = vec![];
     let mut outputs = vec![];
-
     for e in list_path(&path_prefix) {
         if !is_dir(&e, follow_links) {
             if remaining_components.is_empty() {
@@ -369,38 +368,22 @@ fn resolve_recursive_scan_task(
             continue;
         }
 
-        let scan_curr_dir = TaskBuilder::new()
+        let subdir_scan = TaskBuilder::new()
             .add_constant(&e.path)
             .add_components(remaining_components.clone())
             .build();
-        new_tasks.push(scan_curr_dir);
+        new_tasks.push(subdir_scan);
 
         if max_depth > 1 {
-            let mut subdir_scan = TaskBuilder::new().add_constant(&e.path);
-            subdir_scan = subdir_scan.add_recursive_scan(max_depth - 1);
-            subdir_scan = subdir_scan.add_components(remaining_components.clone());
-            new_tasks.push(subdir_scan.build());
+            let mut recursive_scan = TaskBuilder::new().add_constant(&e.path);
+            recursive_scan = recursive_scan.add_recursive_scan(max_depth - 1);
+            recursive_scan =
+                recursive_scan.add_components(remaining_components.clone());
+            new_tasks.push(recursive_scan.build());
         }
     }
 
-    // // TODO: REMOVE
-    // let ret = TaskResults {
-    //     new_tasks,
-    //     outputs,
-    // };
-    //
-    // println!("\ntask: resolve_recursive_scan_task: max_depth: {}, path_prefix {:?}, remaining_components, {:?}, follow_links: {}", &max_depth, &path_prefix, &remaining_components, &follow_links);
-    // println!("resolved to: new tasks{:#?},", &ret.new_tasks);
-    // for e in &ret.outputs {
-    //     println!("!!!outputs found: {:?}", &e.path);
-    // }
-    //
-    // ret
-
-    TaskResults {
-        new_tasks,
-        outputs,
-    }
+    TaskResults { new_tasks, outputs }
 }
 
 fn resolve_constant_task(path: &Path) -> TaskResults {
@@ -854,110 +837,5 @@ mod tests {
     }
 }
 
-// TODO: create a dir for this action and do request/response in separate files from the main logic
-
 // TODO: GRR bug: /home/spawek/rrg/**/*toml doesn't find /home/spawek/rrg/Cargo.toml
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
-//
-// // follow links: check cases: (on GRR)
-// // - recursive search going through the link
-// // - glob going through the link
-// // - constant scanning the link
-// /* GRR TESTS
-// 1)
-// /home/spawek/rrg/test/b/link_to_a_file
-// Stat: Resolve links: false
-// Follow links: false
-// RESULT: not resolved
-//
-// 2)
-// /home/spawek/rrg/test/b/link_to_a_file
-// Stat: Resolve links: true
-// Follow links: false
-// RESULT: stats are resolved but path still points at the symlink
-//
-// 3)
-// /home/spawek/rrg/test/b/link_to_a_file/**/file
-// Follow links: false
-// NO RESULTS
-//
-// 4)
-// /home/spawek/rrg/test/b/link_to_a_file/**/file
-// Follow links: true
-// NO RESULTS
-//
-// 5)
-// /home/spawek/rrg/test/b/**/file
-// Follow links: true
-// NO RESULTS
-//
-// 6)
-// /home/spawek/rrg/test/b/**
-// Follow links: true
-// RESULT: only symlink found
-//
-// LINK TO DIR ADDED HERE:
-//
-// 7)
-// /home/spawek/rrg/test/b/**
-// Follow links: true
-// RESULT: (successfully going through the link to dir)
-// /home/spawek/rrg/test/b/link_to_a_dir
-// /home/spawek/rrg/test/b/link_to_a_dir/file
-//
-// 8)
-// /home/spawek/rrg/test/b/**
-// Follow links: false
-// RESULT: not going though the link
-//
-// 9)
-// /home/spawek/rrg/test/b/**/file
-// Follow links: true
-// RESULT:
-// /home/spawek/rrg/test/b/link_to_a_dir/file
-//
-// 10)
-// /home/spawek/rrg/test/b/**/../file
-// Follow links: true
-// RESULT: ".." is cut out of the path
-// /home/spawek/rrg/test/b/link_to_a_dir/file
-//
-// 11)
-// /home/spawek/rrg/test/b/*/file (GLOB)
-// Follow links: true
-// RESULT: found
-// /home/spawek/rrg/test/b/link_to_a_dir/file
-//
-// 12) /home/spawek/rrg/test/b/link_to_a_dir/file (const)
-// Follow links: true
-// RESULT: found
-// /home/spawek/rrg/test/b/link_to_a_dir/file
-//
-// 13) /home/spawek/rrg/test/b/link_to_a_dir/file (const)
-// Follow links: false
-// RESULT: found (?!?)
-//
-// 14)
-// /home/spawek/rrg/test/b/*/file (GLOB)
-// Follow links: false
-// RESULT: found (?!?)
-//
-// 15)
-// /home/spawek/rrg/test/b/**/file
-// Follow links: false
-// RESULT: found (?!?)
-// /home/spawek/rrg/test/b/link_to_a_dir/file
-//
-// 16)
-// /home/spawek/rrg/test/b/**
-// Follow links: false
-// RESULT: NOT FOUND (?!?) /home/spawek/rrg/test/b/link_to_a_dir/file -
-// only links are in the result
-//
-// 16)
-// /home/spawek/rrg/test/b/**/
-// Follow links: false
-// RESULT: NOT FOUND (?!?) /home/spawek/rrg/test/b/link_to_a_dir/file -
-// only links are in the result
-//
-//  */
