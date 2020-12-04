@@ -60,17 +60,17 @@ impl Request {
 #[derive(Debug)]
 pub struct Response {
     /// A path to the file that the result corresponds to.
-    path: PathBuf,
+    pub path: PathBuf,
     /// Metadata about the file.
-    metadata: Metadata,
+    pub metadata: Metadata,
     /// A path to the pointed file (in case of a symlink).
-    symlink: Option<PathBuf>,
+    pub symlink: Option<PathBuf>,
     /// Extended attributes of the file.
     #[cfg(target_family = "unix")]
-    ext_attrs: Vec<crate::fs::unix::ExtAttr>,
+    pub ext_attrs: Vec<crate::fs::unix::ExtAttr>,
     /// Additional Linux-specific file flags.
     #[cfg(target_os = "linux")]
-    flags_linux: Option<u32>,
+    pub flags_linux: Option<u32>,
     // TODO: Add support for collecting file flags on macOS.
 }
 

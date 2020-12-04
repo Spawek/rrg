@@ -50,6 +50,7 @@ use crate::action::finder::task::{
 use crate::action::stat::{
     stat, Request as StatRequest, Response as StatEntry,
 };
+use crate::fs;
 use crate::fs::{list_dir, Entry};
 use crate::session::{self, Session};
 use log::info;
@@ -60,7 +61,6 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::FileFinderResult;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
-use crate::fs;
 
 #[derive(Debug)]
 pub enum Response {
@@ -76,7 +76,7 @@ impl super::super::Response for Response {
         match self {
             Response::Stat(stat) => FileFinderResult {
                 hash_entry: None,
-                matches: vec![],
+                matches: vec![],  // TODO: fill matches?
                 stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             },
@@ -261,7 +261,7 @@ impl std::iter::Iterator for ListPath {
     }
 }
 
-fn list_path(path: &Path) -> impl Iterator<Item=Entry> {
+fn list_path(path: &Path) -> impl Iterator<Item = Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
         Err(err) => {
@@ -809,10 +809,21 @@ mod tests {
     // TODO: test 2 recursive elements throwing an error
 
     #[test]
-    fn local_files_test() {
+    fn test_alternatives() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let f1 = tempdir.path().join("f1");
+        std::fs::write(&f1, "");
+        let f2 = tempdir.path().join("f2");
+        std::fs::write(&f2, "");
+
         let mut session = session::test::Fake::new();
         let request = Request {
-            paths: vec!["/home/spaw*/rrg/**1/*toml".to_owned()],
+            paths: vec![tempdir
+                .path()
+                .join("{f1,f2}")
+                .to_str()
+                .unwrap()
+                .to_owned()],
             path_type: PathType::Os,
             action: Action::Stat(StatActionOptions {
                 resolve_links: false,
@@ -829,18 +840,29 @@ mod tests {
             Err(err) => panic!("handle error: {}", err),
         }
 
-        // let args : FileFinderArgs = FileFinderArgs{
-        //     action: Some(rrg_proto::FileFinderAction{
-        //         // action_type: Some(2),
-        //         action_type: None,
-        //         ..Default::default()}
-        //     ),
-        //         ..Default::default()};
-        //
-        // let req = Request2::from_proto(args);
-        // println!("req: {:?}", req);
-        //
-        // assert_eq!(session.reply_count(), 1);
+        let mut replies = session.replies().collect::<Vec<&Response>>();
+        assert!(replies
+            .iter()
+            .find(|response| {
+                if let Response::Stat(entry) = response {
+                    entry.path == f1
+                }
+                else {
+                    false
+                }
+            })
+            .is_some());
+        assert!(replies
+            .iter()
+            .find(|response| {
+                if let Response::Stat(entry) = response {
+                    entry.path == f2
+                }
+                else {
+                    false
+                }
+            })
+            .is_some());
     }
 }
 
