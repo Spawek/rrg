@@ -147,12 +147,6 @@ pub fn handle<S: Session>(
         )));
     }
 
-    // TODO: path must be absolute
-    // TODO: by default everything is case insensitive
-    // TODO: support unicode and non-unicode characters
-    // TODO: it would be nice if 1 dir is not scanned twice in the same search - even if paths are overlapping
-    //       caching can help
-
     let follow_link = req.follow_links;
     let outputs: Vec<Entry> = req
         .paths
@@ -868,3 +862,5 @@ mod tests {
 
 // TODO: GRR bug: /home/spawek/rrg/**/*toml doesn't find /home/spawek/rrg/Cargo.toml
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
+
+// TODO: fix ".." in paths

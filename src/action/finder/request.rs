@@ -20,6 +20,7 @@ use rrg_proto::{
     FileFinderSizeCondition, FileFinderStatActionOptions,
 };
 use std::convert::TryFrom;
+use std::path::{Path, PathBuf};
 
 type HashActionOversizedFilePolicy =
     rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
@@ -492,6 +493,15 @@ impl super::super::Request for Request {
             }
         };
 
+        for path in &proto.paths {
+            if !Path::new(&path).is_absolute() {
+                return Err(ParseError::malformed(format!(
+                    "Request contains a not absolute path: {}",
+                    path
+                )));
+            }
+        }
+
         Ok(Request {
             paths: proto.paths,
             path_type,
@@ -530,8 +540,10 @@ mod tests {
 
     #[test]
     fn test_basic_root_parameters() {
+        let dir = std::env::current_dir().unwrap();
+        let path = dir.to_str().unwrap();
         let request = Request::from_proto(FileFinderArgs {
-            paths: vec!["abc".to_string(), "cba".to_string()],
+            paths: vec![path.to_owned()],
             pathtype: Some(PathType::Registry as i32),
             process_non_regular_files: Some(true),
             follow_links: Some(true),
@@ -544,11 +556,28 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(request.paths, vec!["abc".to_string(), "cba".to_string()]);
+        assert_eq!(request.paths, vec![path.to_owned()]);
         assert_eq!(request.path_type, PathType::Registry);
         assert_eq!(request.process_non_regular_files, true);
         assert_eq!(request.follow_links, true);
         assert_eq!(request.xdev_mode, XDevMode::Always);
+    }
+
+    #[test]
+    fn test_fail_on_relative_path() {
+        let path = "./test";
+        assert!(Request::from_proto(FileFinderArgs {
+            paths: vec![path.to_owned()],
+            pathtype: Some(PathType::Registry as i32),
+            process_non_regular_files: Some(true),
+            follow_links: Some(true),
+            xdev: Some(rrg_proto::file_finder_args::XDev::Always as i32),
+            action: Some(FileFinderAction {
+                action_type: Some(ActionType::Stat as i32),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }).is_err());
     }
 
     #[test]
