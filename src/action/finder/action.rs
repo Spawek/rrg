@@ -76,7 +76,7 @@ impl super::super::Response for Response {
         match self {
             Response::Stat(stat) => FileFinderResult {
                 hash_entry: None,
-                matches: vec![],  // TODO: fill matches?
+                matches: vec![],  // this field is never used  // TODO: check if it's used with `contents_regex_match` and `contents_literal_match`
                 stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             },
@@ -100,7 +100,7 @@ impl Display for UnsupportedRequestError {
 }
 
 impl UnsupportedRequestError {
-    /// Creates a new error indicating that a regex cannot be parsed.
+    /// Creates a new error indicating that the request type is not supported.
     pub fn new(message: String) -> session::Error {
         session::Error::Action(Box::new(UnsupportedRequestError { message }))
     }
@@ -116,11 +116,6 @@ pub fn handle<S: Session>(
     session: &mut S,
     req: Request,
 ) -> session::Result<()> {
-    info!(
-        "Received client side file finder request request: {:?}",
-        req
-    );
-
     if req.path_type != PathType::Os {
         return Err(UnsupportedRequestError::new(format!(
             "unsupported PathType: {:?}",
@@ -421,6 +416,8 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use crypto::digest::Digest;
 
     #[test]
     fn test_constant_path_with_file() {
@@ -806,9 +803,9 @@ mod tests {
     fn test_alternatives() {
         let tempdir = tempfile::tempdir().unwrap();
         let f1 = tempdir.path().join("f1");
-        std::fs::write(&f1, "");
+        std::fs::write(&f1, "").unwrap();
         let f2 = tempdir.path().join("f2");
-        std::fs::write(&f2, "");
+        std::fs::write(&f2, "").unwrap();
 
         let mut session = session::test::Fake::new();
         let request = Request {
@@ -834,7 +831,7 @@ mod tests {
             Err(err) => panic!("handle error: {}", err),
         }
 
-        let mut replies = session.replies().collect::<Vec<&Response>>();
+        let replies = session.replies().collect::<Vec<&Response>>();
         assert!(replies
             .iter()
             .find(|response| {
@@ -857,6 +854,35 @@ mod tests {
                 }
             })
             .is_some());
+    }
+
+    #[test]
+    fn test_hash(){
+        let test_string = "some_test_data";
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let file = tempdir.path().join("f1");
+        std::fs::write(&file, &test_string).unwrap();
+
+        let contents = std::fs::read(file).unwrap();
+
+        let mut sha1_hasher = crypto::sha1::Sha1::new();
+        sha1_hasher.input(&contents);
+        let sha1 = sha1_hasher.result_str();
+        assert_eq!(sha1, "a62a6d5991238ae72d81fe6e4769b3043d9fe670");
+
+        let mut sha256_hasher = crypto::sha2::Sha256::new();
+        sha256_hasher.input(&contents);
+        let sha256 = sha256_hasher.result_str();
+        assert_eq!(sha256, "d76d85adca8afad205edebc11f9b5086bca75acb512a748bc79660e1346af546");
+
+        let mut md5_hasher = crypto::md5::Md5::new();
+        md5_hasher.input(&contents);
+        let md5 = md5_hasher.result_str();
+        assert_eq!(md5, "e091b6f1a233049d22d2807fa8086f3f");
+
+        let num_bytes = contents.len();
+        assert_eq!(num_bytes, 14);
     }
 }
 
