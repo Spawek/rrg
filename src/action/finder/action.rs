@@ -66,7 +66,8 @@ use crate::action::finder::hash::hash;
 #[derive(Debug)]
 pub enum Response {
     Stat(StatEntry),
-    Hash(HashEntry),
+    /// GRR Hash action returns also StatEntry, we keep the same behavior.
+    Hash(HashEntry, StatEntry),
 }
 
 impl super::super::Response for Response {
@@ -82,10 +83,10 @@ impl super::super::Response for Response {
                 stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             },
-            Response::Hash(hash) => FileFinderResult {
+            Response::Hash(hash, stat) => FileFinderResult {
                 hash_entry: Some(hash),
                 matches: vec![],
-                stat_entry: None,
+                stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             }
         }
@@ -166,7 +167,9 @@ pub fn handle<S: Session>(
                     collect_ext_attrs: config.collect_ext_attrs,
                     follow_symlink: config.resolve_links,
                 })?;
-
+                // TODO: just warn on failed stat
+                // TODO: stat must be done on all actions - modify the input struct
+                // TODO: test actions
                 session.reply(Response::Stat(entry_stat))?;
             }
         }
@@ -174,7 +177,12 @@ pub fn handle<S: Session>(
             for e in outputs {
                 let hash = hash(&e.path, &config);
                 if let Some(hash) = hash {
-                    session.reply(Response::Hash(hash))?;
+                    let entry_stat = stat(&StatRequest {
+                        path: e.path,
+                        collect_ext_attrs: config.collect_ext_attrs,
+                        follow_symlink: false,  // TODO: what should be the value here?
+                    })?;
+                    session.reply(Response::Hash(hash, entry_stat))?;
                 }
             }
             return Err(UnsupportedRequestError::new(
@@ -873,3 +881,4 @@ mod tests {
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
 
 // TODO: fix ".." in paths
+// TODO: change actions definiton as Stat is always performed (also on Hash and Download)
