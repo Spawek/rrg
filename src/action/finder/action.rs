@@ -50,10 +50,10 @@ use crate::action::finder::task::{
 use crate::action::stat::{
     stat, Request as StatRequest, Response as StatEntry,
 };
+use rrg_proto::Hash as HashEntry;
 use crate::fs;
 use crate::fs::{list_dir, Entry};
 use crate::session::{self, Session};
-use log::info;
 use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
@@ -61,10 +61,12 @@ use rrg_proto::path_spec::PathType;
 use rrg_proto::FileFinderResult;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+use crate::action::finder::hash::hash;
 
 #[derive(Debug)]
 pub enum Response {
     Stat(StatEntry),
+    Hash(HashEntry),
 }
 
 impl super::super::Response for Response {
@@ -80,6 +82,12 @@ impl super::super::Response for Response {
                 stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             },
+            Response::Hash(hash) => FileFinderResult {
+                hash_entry: Some(hash),
+                matches: vec![],
+                stat_entry: None,
+                transferred_file: None,
+            }
         }
     }
 }
@@ -162,7 +170,13 @@ pub fn handle<S: Session>(
                 session.reply(Response::Stat(entry_stat))?;
             }
         }
-        Action::Hash(_) => {
+        Action::Hash(config) => {
+            for e in outputs {
+                let hash = hash(&e.path, &config);
+                if let Some(hash) = hash {
+                    session.reply(Response::Hash(hash))?;
+                }
+            }
             return Err(UnsupportedRequestError::new(
                 "Hash action is not supported".to_string(),
             ))
@@ -416,8 +430,6 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use crypto::digest::Digest;
 
     #[test]
     fn test_constant_path_with_file() {
@@ -854,35 +866,6 @@ mod tests {
                 }
             })
             .is_some());
-    }
-
-    #[test]
-    fn test_hash(){
-        let test_string = "some_test_data";
-
-        let tempdir = tempfile::tempdir().unwrap();
-        let file = tempdir.path().join("f1");
-        std::fs::write(&file, &test_string).unwrap();
-
-        let contents = std::fs::read(file).unwrap();
-
-        let mut sha1_hasher = crypto::sha1::Sha1::new();
-        sha1_hasher.input(&contents);
-        let sha1 = sha1_hasher.result_str();
-        assert_eq!(sha1, "a62a6d5991238ae72d81fe6e4769b3043d9fe670");
-
-        let mut sha256_hasher = crypto::sha2::Sha256::new();
-        sha256_hasher.input(&contents);
-        let sha256 = sha256_hasher.result_str();
-        assert_eq!(sha256, "d76d85adca8afad205edebc11f9b5086bca75acb512a748bc79660e1346af546");
-
-        let mut md5_hasher = crypto::md5::Md5::new();
-        md5_hasher.input(&contents);
-        let md5 = md5_hasher.result_str();
-        assert_eq!(md5, "e091b6f1a233049d22d2807fa8086f3f");
-
-        let num_bytes = contents.len();
-        assert_eq!(num_bytes, 14);
     }
 }
 

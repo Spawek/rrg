@@ -20,7 +20,7 @@ use rrg_proto::{
     FileFinderSizeCondition, FileFinderStatActionOptions,
 };
 use std::convert::TryFrom;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 type HashActionOversizedFilePolicy =
     rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
