@@ -73,7 +73,7 @@ pub fn hash(path: &Path, config: &HashActionOptions) -> Option<HashEntry> {
             let expected_bytes = min(metadata.len(), config.max_size);
             if read_bytes != expected_bytes {
                 warn!(
-                    "failed to read all data from: {}, {} bytes were read, but {} was expected",
+                    "failed to read all data from: {}, {} bytes were read, but {} were expected",
                     path.display(),
                     &read_bytes,
                     expected_bytes
