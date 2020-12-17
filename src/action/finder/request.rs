@@ -20,7 +20,6 @@ use rrg_proto::{
     FileFinderSizeCondition, FileFinderStatActionOptions,
 };
 use std::convert::TryFrom;
-use std::path::Path;
 
 type HashActionOversizedFilePolicy =
     rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
@@ -37,41 +36,63 @@ type PathType = rrg_proto::path_spec::PathType;
 
 #[derive(Debug)]
 pub struct Request {
-    pub paths: Vec<String>,
-    pub path_type: PathType,
+    /// A list of paths to glob that supports `**` path recursion and
+    /// alternatives in form of `{a,b}`.
+    pub path_queries: Vec<String>,
+    /// Action type to be performed.
     pub action: Action,
+    /// Conditions that must be met by found file for the action to
+    /// be performed on it.
     pub conditions: Vec<Condition>,
+    /// Work with all kinds of files - not only with regular ones.
     pub process_non_regular_files: bool,
+    /// Should symbolic links be followed by recursive search.
     pub follow_links: bool,
+    /// Behavior for crossing devices when searching the filesystem.
     pub xdev_mode: XDevMode,
 }
 
 #[derive(Debug)]
 pub enum Action {
+    /// Get the metadata of the file.
     Stat(StatActionOptions),
+    /// Get the hash of the file.
     Hash(HashActionOptions),
+    /// Download the file.
     Download(DownloadActionOptions),
 }
 
 #[derive(Debug)]
 pub struct StatActionOptions {
+    /// Should symbolic link be resolved if it is a target of the action.
     pub resolve_links: bool,
+    /// Should linux extended file attributes be collected.
     pub collect_ext_attrs: bool,
 }
 
 #[derive(Debug)]
 pub struct HashActionOptions {
+    /// Maximum file size in bytes acceptable by the action.
     pub max_size: u64,
+    /// Action to perform when requested file is bigger than `max_size`.
     pub oversized_file_policy: HashActionOversizedFilePolicy,
+    /// Should linux extended file attributes be collected.
     pub collect_ext_attrs: bool,
 }
 
 #[derive(Debug)]
 pub struct DownloadActionOptions {
+    /// Maximum file size in bytes acceptable by the action.
     pub max_size: u64,
+    /// Action to perform when requested file is bigger than `max_size`.
     pub oversized_file_policy: DownloadActionOversizedFilePolicy,
+    /// If true, look in any defined external file stores for files before
+    /// downloading them, and offer any new files to external stores. This
+    /// should be true unless the external checks are misbehaving.
     pub use_external_stores: bool,
+    /// Should linux extended file attributes be collected.
     pub collect_ext_attrs: bool,
+    /// Number of bytes per chunk that the downloaded file is divided into.
     pub chunk_size: u64,
 }
 
@@ -177,15 +198,6 @@ impl TryFrom<FileFinderDownloadActionOptions> for Action {
             use_external_stores: proto.use_external_stores(),
             chunk_size: proto.chunk_size(),
         }))
-    }
-}
-
-impl ProtoEnum<PathType> for PathType {
-    fn default() -> PathType {
-        FileFinderArgs::default().pathtype()
-    }
-    fn from_i32(val: i32) -> Option<PathType> {
-        PathType::from_i32(val)
     }
 }
 
@@ -380,66 +392,68 @@ fn parse_regex(bytes: Vec<u8>) -> Result<Regex, ParseError> {
 fn get_contents_regex_match_condition(
     proto: Option<FileFinderContentsRegexMatchCondition>,
 ) -> Result<Vec<Condition>, ParseError> {
-    if let Some(options) = proto {
-        let bytes_before = options.bytes_before();
-        let bytes_after = options.bytes_after();
-        let start_offset = options.start_offset();
-        let length = options.length();
-        let mode = MatchMode::from(parse_enum::<RegexMatchMode>(options.mode)?);
+    let options = match proto {
+        Some(options) => options,
+        None => return Ok(vec![]),
+    };
 
-        let regex = match options.regex {
-            None => {
-                return Ok(vec![]);
-            }
-            Some(v) => parse_regex(v)?,
-        };
+    let bytes_before = options.bytes_before();
+    let bytes_after = options.bytes_after();
+    let start_offset = options.start_offset();
+    let length = options.length();
+    let mode = MatchMode::from(parse_enum::<RegexMatchMode>(options.mode)?);
 
-        let ret = ContentsRegexMatchConditionOptions {
-            regex,
-            mode,
-            bytes_before,
-            bytes_after,
-            start_offset,
-            length,
-        };
-        return Ok(vec![Condition::ContentsRegexMatch(ret)]);
-    }
-    Ok(vec![])
+    let regex = match options.regex {
+        None => return Ok(vec![]),
+        Some(v) => parse_regex(v)?,
+    };
+
+    let ret = ContentsRegexMatchConditionOptions {
+        regex,
+        mode,
+        bytes_before,
+        bytes_after,
+        start_offset,
+        length,
+    };
+
+    Ok(vec![Condition::ContentsRegexMatch(ret)])
 }
 
 fn get_contents_literal_match_condition(
     proto: Option<FileFinderContentsLiteralMatchCondition>,
 ) -> Result<Vec<Condition>, ParseError> {
-    if let Some(options) = proto {
-        let bytes_before = options.bytes_before();
-        let bytes_after = options.bytes_after();
-        let start_offset = options.start_offset();
-        let length = options.length();
-        let xor_in_key = options.xor_in_key();
-        let xor_out_key = options.xor_out_key();
-        let mode =
-            MatchMode::from(parse_enum::<LiteralMatchMode>(options.mode)?);
+    let options = match proto {
+        Some(options) => options,
+        None => return Ok(vec![]),
+    };
 
-        let literal = match options.literal {
-            None => {
-                return Ok(vec![]);
-            }
-            Some(v) => v,
-        };
+    let bytes_before = options.bytes_before();
+    let bytes_after = options.bytes_after();
+    let start_offset = options.start_offset();
+    let length = options.length();
+    let xor_in_key = options.xor_in_key();
+    let xor_out_key = options.xor_out_key();
+    let mode =
+        MatchMode::from(parse_enum::<LiteralMatchMode>(options.mode)?);
 
-        let ret = ContentsLiteralMatchConditionOptions {
-            literal,
-            mode,
-            bytes_before,
-            bytes_after,
-            start_offset,
-            length,
-            xor_in_key,
-            xor_out_key,
-        };
-        return Ok(vec![Condition::ContentsLiteralMatch(ret)]);
-    }
-    Ok(vec![])
+    let literal = match options.literal {
+        None => return Ok(vec![]),
+        Some(v) => v,
+    };
+
+    let ret = ContentsLiteralMatchConditionOptions {
+        literal,
+        mode,
+        bytes_before,
+        bytes_after,
+        start_offset,
+        length,
+        xor_in_key,
+        xor_out_key,
+    };
+
+    Ok(vec![Condition::ContentsLiteralMatch(ret)])
 }
 
 fn get_conditions(
@@ -474,11 +488,15 @@ impl super::super::Request for Request {
     type Proto = FileFinderArgs;
 
     fn from_proto(proto: FileFinderArgs) -> Result<Request, ParseError> {
+        if !matches!(proto.pathtype(), PathType::Os) {
+            return Err(ParseError::malformed(
+                "File Finder does not support path types other than `Os`.",
+            ));
+        }
+
         let follow_links = proto.follow_links();
         let process_non_regular_files = proto.process_non_regular_files();
         let xdev_mode = parse_enum(proto.xdev)?;
-        let path_type = parse_enum(proto.pathtype)?;
-
         let mut conditions = vec![];
         for proto_condition in proto.conditions {
             conditions.extend(get_conditions(proto_condition)?);
@@ -486,25 +504,13 @@ impl super::super::Request for Request {
 
         let action = match proto.action {
             Some(action) => Action::try_from(action)?,
-            None => {
-                return Err(ParseError::malformed(
+            None => return Err(ParseError::malformed(
                     "File Finder request does not contain action definition.",
-                ));
-            }
+                )),
         };
 
-        for path in &proto.paths {
-            if !Path::new(&path).is_absolute() {
-                return Err(ParseError::malformed(format!(
-                    "Request contains a not absolute path: {}",
-                    path
-                )));
-            }
-        }
-
         Ok(Request {
-            paths: proto.paths,
-            path_type,
+            path_queries: proto.paths,
             action,
             conditions,
             follow_links,
@@ -530,9 +536,8 @@ mod tests {
         })
         .unwrap();
 
-        assert!(request.paths.is_empty());
+        assert!(request.path_queries.is_empty());
         assert!(request.conditions.is_empty());
-        assert_eq!(request.path_type, PathType::Os);
         assert_eq!(request.process_non_regular_files, false);
         assert_eq!(request.follow_links, false);
         assert_eq!(request.xdev_mode, XDevMode::Local);
@@ -540,11 +545,8 @@ mod tests {
 
     #[test]
     fn test_basic_root_parameters() {
-        let dir = std::env::current_dir().unwrap();
-        let path = dir.to_str().unwrap();
         let request = Request::from_proto(FileFinderArgs {
-            paths: vec![path.to_owned()],
-            pathtype: Some(PathType::Registry as i32),
+            paths: vec!["abc".to_string(), "cba".to_string()],
             process_non_regular_files: Some(true),
             follow_links: Some(true),
             xdev: Some(rrg_proto::file_finder_args::XDev::Always as i32),
@@ -556,28 +558,34 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(request.paths, vec![path.to_owned()]);
-        assert_eq!(request.path_type, PathType::Registry);
+        assert_eq!(
+            request.path_queries,
+            vec!["abc".to_string(), "cba".to_string()]
+        );
         assert_eq!(request.process_non_regular_files, true);
         assert_eq!(request.follow_links, true);
         assert_eq!(request.xdev_mode, XDevMode::Always);
     }
 
     #[test]
-    fn test_fail_on_relative_path() {
-        let path = "./test";
-        assert!(Request::from_proto(FileFinderArgs {
-            paths: vec![path.to_owned()],
-            pathtype: Some(PathType::Registry as i32),
+    fn test_fails_on_non_os_path_type() {
+        let err = Request::from_proto(FileFinderArgs {
+            paths: vec!["abc".to_string(), "cba".to_string()],
             process_non_regular_files: Some(true),
             follow_links: Some(true),
+            pathtype: Some(PathType::Registry as i32),
             xdev: Some(rrg_proto::file_finder_args::XDev::Always as i32),
             action: Some(FileFinderAction {
                 action_type: Some(ActionType::Stat as i32),
                 ..Default::default()
             }),
             ..Default::default()
-        }).is_err());
+        }).unwrap_err();
+
+        match err {
+            ParseError::Malformed(_) => {}
+            e @ _ => panic!("Unexpected error type: {:?}", e),
+        }
     }
 
     #[test]

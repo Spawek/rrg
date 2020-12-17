@@ -58,7 +58,6 @@ use crate::session::{self, Session};
 use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
-use rrg_proto::path_spec::PathType;
 use rrg_proto::FileFinderResult;
 use rrg_proto::Hash as HashEntry;
 use std::fmt::{Display, Formatter};
@@ -137,13 +136,6 @@ pub fn handle<S: Session>(
     session: &mut S,
     req: Request,
 ) -> session::Result<()> {
-    if req.path_type != PathType::Os {
-        return Err(UnsupportedRequestError::new(format!(
-            "unsupported PathType: {:?}",
-            req.path_type
-        )));
-    }
-
     if req.conditions.len() > 0 {
         return Err(UnsupportedRequestError::new(
             "conditions parameter is not supported".to_string(),
@@ -165,7 +157,7 @@ pub fn handle<S: Session>(
 
     let follow_link = req.follow_links;
     let outputs: Vec<Entry> = req
-        .paths
+        .path_queries
         .into_iter()
         .flat_map(|ref x| expand_groups(x))
         .map(|x| to_absoute_path(&x))
@@ -828,13 +820,12 @@ mod tests {
 
         let mut session = session::test::Fake::new();
         let request = Request {
-            paths: vec![tempdir
+            path_queries: vec![tempdir
                 .path()
                 .join("{f1,f2}")
                 .to_str()
                 .unwrap()
                 .to_owned()],
-            path_type: PathType::Os,
             action: Action::Stat(StatActionOptions {
                 resolve_links: false,
                 collect_ext_attrs: false,
@@ -878,3 +869,4 @@ mod tests {
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
 
 // TODO: change actions definiton as Stat is always performed (also on Hash and Download)
+// TODO: dev type support

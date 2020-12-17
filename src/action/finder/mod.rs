@@ -21,7 +21,7 @@
 //! - `glob.rs` converts glob expressions to `regex::Regex`.
 //! - `groups.rs` resolves paths alternatives.
 //! - `task.rs` parses paths to internal representation.
-//! - `hash.rs` support for the `hash` action.
+//! - `hash.rs` `hash` action support.
 
 pub mod action;
 pub mod request;
