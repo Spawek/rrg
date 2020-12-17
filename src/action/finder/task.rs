@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use regex::Regex;
 use crate::action::finder::glob::glob_to_regex;
-use std::path::{PathBuf, Path};
+use std::path::{PathBuf, Path, Component};
 
 /// Part of the path. Paths are split to list of `PathComponent` to make
 /// the processing simpler.
@@ -98,22 +98,23 @@ fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     }
 }
 
-// TODO: take PathBuf here and use Path::components
-pub fn build_task(path: &str) -> Task {
-    if !path.starts_with(&"/") {
-        panic!("path must be absolute");  // TODO: throw a meaningful error
-    }
-
-    // adds the root dir // TODO: rethink this comment
-    let mut components : Vec<PathComponent> = vec![PathComponent::Constant(PathBuf::from("/"))];  // TODO: is it needed actually
-    components.extend(path.split("/").into_iter()  // TODO: support different OS separators
-        .filter(|x| !x.is_empty())
-        .map(get_path_component));
+pub fn build_task(path: &Path) -> Task {
+    let components = path.components()
+        .map(|x| get_path_component(&x))
+        .collect();
 
     build_task_from_components(fold_constant_components(components))
 }
 
-fn get_path_component(s : &str) -> PathComponent {
+fn get_path_component(component: &Component) -> PathComponent {
+    let s = match component {
+        Component::Normal(p) => match p.to_str(){
+            Some(s) => s,
+            None => return PathComponent::Constant(PathBuf::from(component)),
+        }
+        _ => return PathComponent::Constant(PathBuf::from(component)),
+    };
+
     let recursive_scan = get_recursive_scan_component(s);
     if recursive_scan.is_some(){
         return recursive_scan.unwrap();
@@ -214,7 +215,7 @@ mod tests {
 
     #[test]
     fn basic_parse_path_test() {
-        let task = build_task("/home/user/**5/??[!qwe]");
+        let task = build_task(&PathBuf::new().join(Component::RootDir).join("home").join("user").join("**5").join("??[!qwe]"));
         assert_eq!(task.path_prefix, PathBuf::from("/home/user"));
         assert_recursive_scan_component(&task.current_component, 5);
         assert_eq!(task.remaining_components.len(), 1);
@@ -223,7 +224,7 @@ mod tests {
 
     #[test]
     fn default_glob_depth_test() {
-        let task = build_task("/**");
+        let task = build_task(&PathBuf::new().join(Component::RootDir).join("**"));
         assert_eq!(task.path_prefix, PathBuf::from("/"));
         assert_recursive_scan_component(&task.current_component, 3);
         assert_eq!(task.remaining_components.len(), 0);

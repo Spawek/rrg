@@ -29,7 +29,6 @@ pub fn normalize(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    use std::path::PrefixComponent;
 
     #[test]
     fn test_normalize_root() {
@@ -49,7 +48,7 @@ mod tests {
     fn test_normalize_path_with_cur_dir() {
         let path = PathBuf::new()
             .join(Component::RootDir)
-            .join(Component::Normal(&OsString::from("a")))
+            .join(Component::Normal(&OsString::from("a")))  // TODO: just "a" instead?
             .join(Component::CurDir)
             .join(Component::Normal(&OsString::from("b")));
         assert_eq!(
