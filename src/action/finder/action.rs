@@ -67,7 +67,7 @@ use std::path::{Path, PathBuf};
 pub enum Response {
     Stat(StatEntry),
     /// GRR Hash action returns also StatEntry, we keep the same behavior.
-    Hash(HashEntry, StatEntry),
+    Hash(HashEntry, Option<StatEntry>),
 }
 
 impl super::super::Response for Response {
@@ -86,7 +86,7 @@ impl super::super::Response for Response {
             Response::Hash(hash, stat) => FileFinderResult {
                 hash_entry: Some(hash),
                 matches: vec![],
-                stat_entry: Some(stat.into_proto()),
+                stat_entry: stat.map(|x| x.into_proto()),
                 transferred_file: None,
             },
         }
@@ -166,15 +166,20 @@ pub fn handle<S: Session>(
         .flat_map(|x| resolve_path(x, follow_link))
         .collect();
 
-    // TODO: check if requests without action type are accepted
+    // TODO: test actions
     for e in outputs {
-        let stat = stat(&StatRequest {
+        let stat_request = StatRequest {
             path: e.path.to_owned(),
             collect_ext_attrs: req.stat_options.collect_ext_attrs,
             follow_symlink: req.stat_options.follow_symlink,
-        })?;
-        // TODO: just warn on failed stat
-        // TODO: test actions
+        };
+        let stat = match stat(&stat_request) {
+            Ok(v) => Some(v),
+            Err(err) => {
+                warn!("Stat action failed on path: {} with error: {}", e.path.display(), err);
+                None
+            }
+        };
 
         match &req.action {
             Some(action) => match action {
@@ -191,7 +196,9 @@ pub fn handle<S: Session>(
                 }
             },
             None => {
-                session.reply(Response::Stat(stat))?;
+                if let Some(stat) = stat {
+                    session.reply(Response::Stat(stat))?;
+                }
             }
         }
     }
@@ -862,3 +869,4 @@ mod tests {
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
 
 // TODO: dev type support
+// TODO: download action
