@@ -166,40 +166,33 @@ pub fn handle<S: Session>(
         .flat_map(|x| resolve_path(x, follow_link))
         .collect();
 
-    match req.action {
-        Action::Stat(config) => {
-            for e in outputs {
-                let entry_stat = stat(&StatRequest {
-                    path: e.path,
-                    collect_ext_attrs: config.collect_ext_attrs,
-                    follow_symlink: config.resolve_links,
-                })?;
-                // TODO: just warn on failed stat
-                // TODO: stat must be done on all actions - modify the input struct
-                // TODO: test actions
-                session.reply(Response::Stat(entry_stat))?;
-            }
-        }
-        Action::Hash(config) => {
-            for e in outputs {
-                let hash = hash(&e.path, &config);
-                if let Some(hash) = hash {
-                    let entry_stat = stat(&StatRequest {
-                        path: e.path,
-                        collect_ext_attrs: config.collect_ext_attrs,
-                        follow_symlink: false, // TODO: what should be the value here?
-                    })?;
-                    session.reply(Response::Hash(hash, entry_stat))?;
+    // TODO: check if requests without action type are accepted
+    for e in outputs {
+        let stat = stat(&StatRequest {
+            path: e.path.to_owned(),
+            collect_ext_attrs: req.stat_options.collect_ext_attrs,
+            follow_symlink: req.stat_options.follow_symlink,
+        })?;
+        // TODO: just warn on failed stat
+        // TODO: test actions
+
+        match &req.action {
+            Some(action) => match action {
+                Action::Hash(config) => {
+                    let hash = hash(&e.path, &config);
+                    if let Some(hash) = hash {
+                        session.reply(Response::Hash(hash, stat))?;
+                    }
+                }
+                Action::Download(_) => {
+                    return Err(UnsupportedRequestError::new(
+                        "Download action is not supported".to_string(),
+                    ))
                 }
             }
-            return Err(UnsupportedRequestError::new(
-                "Hash action is not supported".to_string(),
-            ));
-        }
-        Action::Download(_) => {
-            return Err(UnsupportedRequestError::new(
-                "Download action is not supported".to_string(),
-            ))
+            None => {
+                session.reply(Response::Stat(stat))?;
+            }
         }
     }
 
@@ -805,7 +798,6 @@ mod tests {
             .is_some());
     }
 
-    // TODO: alternatives tests  // must be done on request level (testing using resolve_path can't cover it)
     // TODO: change Path inner type to std::path::Path
     // TODO: test with 2 paths reaching identical element
     // TODO: test 2 recursive elements throwing an error
@@ -826,10 +818,11 @@ mod tests {
                 .to_str()
                 .unwrap()
                 .to_owned()],
-            action: Action::Stat(StatActionOptions {
-                resolve_links: false,
+            stat_options: StatActionOptions {
+                follow_symlink: false,
                 collect_ext_attrs: false,
-            }),
+            },
+            action: None,
             conditions: vec![],
             process_non_regular_files: false,
             follow_links: false,
