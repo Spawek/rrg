@@ -112,7 +112,7 @@ mod tests {
     fn test_hash_values() {
         let test_string = "some_test_data";
         let tempdir = tempfile::tempdir().unwrap();
-        let file = tempdir.path().join("f1");
+        let file = tempdir.path().join("f");
         std::fs::write(&file, &test_string).unwrap();
 
         let result = hash(
@@ -148,7 +148,7 @@ mod tests {
     fn test_trim_file_over_max_size() {
         let test_string = "some_test_data";
         let tempdir = tempfile::tempdir().unwrap();
-        let file = tempdir.path().join("f1");
+        let file = tempdir.path().join("f");
         std::fs::write(&file, &test_string).unwrap();
 
         let result = hash(
@@ -168,7 +168,7 @@ mod tests {
     fn test_skip_file_over_max_size() {
         let test_string = "some_test_data";
         let tempdir = tempfile::tempdir().unwrap();
-        let file = tempdir.path().join("f1");
+        let file = tempdir.path().join("f");
         std::fs::write(&file, &test_string).unwrap();
 
         assert!(hash(
