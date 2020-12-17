@@ -861,5 +861,4 @@ mod tests {
 // TODO: GRR bug: /home/spawek/rrg/**/*toml doesn't find /home/spawek/rrg/Cargo.toml
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
 
-// TODO: change actions definiton as Stat is always performed (also on Hash and Download)
 // TODO: dev type support
