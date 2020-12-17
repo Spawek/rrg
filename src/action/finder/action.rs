@@ -176,7 +176,11 @@ pub fn handle<S: Session>(
         let stat = match stat(&stat_request) {
             Ok(v) => Some(v),
             Err(err) => {
-                warn!("Stat action failed on path: {} with error: {}", e.path.display(), err);
+                warn!(
+                    "Stat action failed on path: {} with error: {}",
+                    e.path.display(),
+                    err
+                );
                 None
             }
         };
@@ -227,25 +231,26 @@ struct ResolvePath {
     follow_links: bool,
 }
 
+fn normalize_path(e: Entry) -> Entry {
+    Entry {
+        metadata: e.metadata,
+        path: normalize(&e.path),
+    }
+}
+
 impl std::iter::Iterator for ResolvePath {
     type Item = Entry;
 
     fn next(&mut self) -> Option<Entry> {
         loop {
-            match self.outputs.pop() {
-                Some(v) => {
-                    return Some(v);
-                }
-                None => {}
+            if let Some(v) = self.outputs.pop(){
+                return Some(v);
             }
 
             let task = self.tasks.pop()?;
             let mut task_results = resolve_task(task, self.follow_links);
             self.tasks.append(&mut task_results.new_tasks);
-            let outputs = task_results.outputs.into_iter().map(|x| Entry {
-                metadata: x.metadata,
-                path: normalize(&x.path),
-            });
+            let outputs = task_results.outputs.into_iter().map(normalize_path);
             self.outputs.extend(outputs);
         }
     }
