@@ -109,7 +109,7 @@ mod tests {
     use rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
 
     #[test]
-    fn test_basic_scenario() {
+    fn test_hash_values() {
         let test_string = "some_test_data";
         let tempdir = tempfile::tempdir().unwrap();
         let file = tempdir.path().join("f1");

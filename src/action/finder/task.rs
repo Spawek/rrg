@@ -98,6 +98,7 @@ fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     }
 }
 
+// TODO: take PathBuf here and use Path::components
 pub fn build_task(path: &str) -> Task {
     if !path.starts_with(&"/") {
         panic!("path must be absolute");  // TODO: throw a meaningful error
@@ -105,7 +106,7 @@ pub fn build_task(path: &str) -> Task {
 
     // adds the root dir // TODO: rethink this comment
     let mut components : Vec<PathComponent> = vec![PathComponent::Constant(PathBuf::from("/"))];  // TODO: is it needed actually
-    components.extend(path.split("/").into_iter()  // // TODO: support different OS separators
+    components.extend(path.split("/").into_iter()  // TODO: support different OS separators
         .filter(|x| !x.is_empty())
         .map(get_path_component));
 
