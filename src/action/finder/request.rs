@@ -141,7 +141,9 @@ pub struct ContentsLiteralMatchConditionOptions {
 impl TryFrom<FileFinderAction> for StatActionOptions {
     type Error = ParseError;
 
-    fn try_from(proto: FileFinderAction) -> Result<StatActionOptions, ParseError> {
+    fn try_from(
+        proto: FileFinderAction,
+    ) -> Result<StatActionOptions, ParseError> {
         // `FileFinderAction::action_type` defines which action will be performed.
         // Only options from the selected action are read.
         Ok(match parse_enum(proto.action_type)? {
@@ -164,7 +166,7 @@ impl From<FileFinderStatActionOptions> for StatActionOptions {
 impl From<FileFinderHashActionOptions> for StatActionOptions {
     fn from(proto: FileFinderHashActionOptions) -> StatActionOptions {
         StatActionOptions {
-            follow_symlink: false,  // TODO: check if it shouldn't be true
+            follow_symlink: false, // TODO: check if it shouldn't be true
             collect_ext_attrs: proto.collect_ext_attrs(),
         }
     }
@@ -173,7 +175,7 @@ impl From<FileFinderHashActionOptions> for StatActionOptions {
 impl From<FileFinderDownloadActionOptions> for StatActionOptions {
     fn from(proto: FileFinderDownloadActionOptions) -> StatActionOptions {
         StatActionOptions {
-            follow_symlink: false,  // TODO: check if it shouldn't be true
+            follow_symlink: false, // TODO: check if it shouldn't be true
             collect_ext_attrs: proto.collect_ext_attrs(),
         }
     }
@@ -184,9 +186,7 @@ fn into_action(proto: FileFinderAction) -> Result<Option<Action>, ParseError> {
     // Only options from the selected action are read.
     Ok(Some(match parse_enum(proto.action_type)? {
         ActionType::Stat => return Ok(None),
-        ActionType::Hash => {
-            Action::try_from(proto.hash.unwrap_or_default())?
-        }
+        ActionType::Hash => Action::try_from(proto.hash.unwrap_or_default())?,
         ActionType::Download => {
             Action::try_from(proto.download.unwrap_or_default())?
         }
@@ -454,8 +454,7 @@ fn get_contents_literal_match_condition(
     let length = options.length();
     let xor_in_key = options.xor_in_key();
     let xor_out_key = options.xor_out_key();
-    let mode =
-        MatchMode::from(parse_enum::<LiteralMatchMode>(options.mode)?);
+    let mode = MatchMode::from(parse_enum::<LiteralMatchMode>(options.mode)?);
 
     let literal = match options.literal {
         None => return Ok(vec![]),
@@ -522,12 +521,16 @@ impl super::super::Request for Request {
             conditions.extend(get_conditions(proto_condition)?);
         }
 
-        let (action, stat_options) = match proto.action {
-            Some(action) => (into_action(action.clone())?, StatActionOptions::try_from(action)?),
-            None => return Err(ParseError::malformed(
-            "File Finder request does not contain action definition.",
-            ))
-        };
+        let (action, stat_options) =
+            match proto.action {
+                Some(action) => (
+                    into_action(action.clone())?,
+                    StatActionOptions::try_from(action)?,
+                ),
+                None => return Err(ParseError::malformed(
+                    "File Finder request does not contain action definition.",
+                )),
+            };
 
         Ok(Request {
             path_queries: proto.paths,
@@ -601,7 +604,8 @@ mod tests {
                 ..Default::default()
             }),
             ..Default::default()
-        }).unwrap_err();
+        })
+        .unwrap_err();
 
         match err {
             ParseError::Malformed(_) => {}

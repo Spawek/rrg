@@ -24,12 +24,12 @@
 //! - `hash.rs` `hash` action support.
 
 pub mod action;
-pub mod request;
 pub mod glob;
 pub mod groups;
-pub mod task;
 pub mod hash;
 pub mod path;
+pub mod request;
+pub mod task;
 
 // Life of a path:
 // - in the input proto FileFinderArgs::paths are `String`.

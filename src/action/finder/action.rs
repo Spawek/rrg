@@ -189,7 +189,7 @@ pub fn handle<S: Session>(
                         "Download action is not supported".to_string(),
                     ))
                 }
-            }
+            },
             None => {
                 session.reply(Response::Stat(stat))?;
             }

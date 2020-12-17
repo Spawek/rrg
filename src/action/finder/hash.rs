@@ -119,7 +119,7 @@ mod tests {
             &file,
             &HashActionOptions {
                 max_size: 14,
-                oversized_file_policy: OversizedFilePolicy::Skip
+                oversized_file_policy: OversizedFilePolicy::Skip,
             },
         )
         .unwrap();
@@ -154,13 +154,13 @@ mod tests {
             &file,
             &HashActionOptions {
                 max_size: 10,
-                oversized_file_policy: OversizedFilePolicy::HashTruncated
+                oversized_file_policy: OversizedFilePolicy::HashTruncated,
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(result.num_bytes.unwrap(), 10);
     }
-
 
     #[test]
     fn test_skip_file_over_max_size() {
@@ -175,6 +175,7 @@ mod tests {
                 max_size: 10,
                 oversized_file_policy: OversizedFilePolicy::Skip
             },
-        ).is_none());
+        )
+        .is_none());
     }
 }
