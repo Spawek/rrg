@@ -121,15 +121,60 @@ impl std::error::Error for UnsupportedRequestError {
     }
 }
 
-fn to_absoute_path(s: &str) -> session::Result<PathBuf> {
-    let path = PathBuf::from(s);
+fn into_absoute_path(s: String) -> session::Result<PathBuf> {
+    let path = PathBuf::from(&s);
     if !path.is_absolute() {
         return Err(UnsupportedRequestError::new(format!(
-            "Non absolute paths are not supported: {}",
-            s
+            "Non-absolute paths are not supported: {}",
+            &s
         )));
     }
     Ok(path)
+}
+
+fn perform_stat_action(e: &Entry, req: &Request) -> Option<crate::action::stat::Response>{
+    let stat_request = StatRequest {
+        path: e.path.to_owned(),
+        collect_ext_attrs: req.stat_options.collect_ext_attrs,
+        follow_symlink: req.stat_options.follow_symlink,
+    };
+
+    match stat(&stat_request) {
+        Ok(v) => Some(v),
+        Err(err) => {
+            warn!(
+                "Stat action failed on path: {} with error: {}",
+                e.path.display(),
+                err
+            );
+            None
+        }
+    }
+}
+
+fn perform_action(e: &Entry, req: &Request) -> Option<Response> {
+    let stat = perform_stat_action(e, &req);
+
+    match &req.action {
+        Some(action) => match action {
+            Action::Hash(config) => {
+                let hash = hash(&e.path, &config);
+                if let Some(hash) = hash {
+                    return Some(Response::Hash(hash, stat));
+                }
+            }
+            Action::Download(_) => {
+                unimplemented!("Download action is not supported");
+            }
+        },
+        None => {
+            if let Some(stat) = stat {
+                return Some(Response::Stat(stat));
+            }
+        }
+    };
+
+    return None;
 }
 
 pub fn handle<S: Session>(
@@ -155,56 +200,20 @@ pub fn handle<S: Session>(
         )));
     }
 
-    let follow_link = req.follow_links;
-    let outputs: Vec<Entry> = req
+    let paths = req
         .path_queries
-        .into_iter()
-        .flat_map(|ref x| expand_groups(x))
-        .map(|x| to_absoute_path(&x))
-        .collect::<session::Result<Vec<_>>>()?
         .iter()
-        .flat_map(|x| resolve_path(x, follow_link))
-        .collect();
+        .flat_map(|x| expand_groups(x))
+        .map(into_absoute_path)
+        .collect::<session::Result<Vec<_>>>()?;
 
-    // TODO: test actions
-    for e in outputs {
-        let stat_request = StatRequest {
-            path: e.path.to_owned(),
-            collect_ext_attrs: req.stat_options.collect_ext_attrs,
-            follow_symlink: req.stat_options.follow_symlink,
-        };
-        let stat = match stat(&stat_request) {
-            Ok(v) => Some(v),
-            Err(err) => {
-                warn!(
-                    "Stat action failed on path: {} with error: {}",
-                    e.path.display(),
-                    err
-                );
-                None
-            }
-        };
+    let responses = paths.iter()
+        .flat_map(|x| resolve_path(x, req.follow_links))
+        // TODO: put filtering here
+        .flat_map(|x| perform_action(&x, &req));
 
-        match &req.action {
-            Some(action) => match action {
-                Action::Hash(config) => {
-                    let hash = hash(&e.path, &config);
-                    if let Some(hash) = hash {
-                        session.reply(Response::Hash(hash, stat))?;
-                    }
-                }
-                Action::Download(_) => {
-                    return Err(UnsupportedRequestError::new(
-                        "Download action is not supported".to_string(),
-                    ))
-                }
-            },
-            None => {
-                if let Some(stat) = stat {
-                    session.reply(Response::Stat(stat))?;
-                }
-            }
-        }
+    for r in responses {
+        session.reply(r)?;
     }
 
     Ok(())
@@ -875,3 +884,4 @@ mod tests {
 
 // TODO: dev type support
 // TODO: download action
+// TODO: cleanup function order here
