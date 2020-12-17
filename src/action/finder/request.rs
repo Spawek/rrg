@@ -179,7 +179,7 @@ impl From<FileFinderDownloadActionOptions> for StatActionOptions {
     }
 }
 
-fn parse_action(proto: FileFinderAction) -> Result<Option<Action>, ParseError> {
+fn into_action(proto: FileFinderAction) -> Result<Option<Action>, ParseError> {
     // `FileFinderAction::action_type` defines which action will be performed.
     // Only options from the selected action are read.
     Ok(Some(match parse_enum(proto.action_type)? {
@@ -523,8 +523,7 @@ impl super::super::Request for Request {
         }
 
         let (action, stat_options) = match proto.action {
-            // TODO: remove clone
-            Some(action) => (parse_action(action.clone())?, StatActionOptions::try_from(action)?),
+            Some(action) => (into_action(action.clone())?, StatActionOptions::try_from(action)?),
             None => return Err(ParseError::malformed(
             "File Finder request does not contain action definition.",
             ))
@@ -621,8 +620,8 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(request.stat_options.follow_symlink, true);
-        assert_eq!(request.stat_options.collect_ext_attrs, true);
+        assert_eq!(request.stat_options.follow_symlink, false);
+        assert_eq!(request.stat_options.collect_ext_attrs, false);
     }
 
     #[test]
