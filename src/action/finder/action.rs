@@ -183,7 +183,7 @@ pub fn handle<S: Session>(
     req: Request,
 ) -> session::Result<()> {
     // TODO: TMP remove!
-    info!("File Finder request: {:?}", req);
+    info!("File Finder request: {:#?}", &req);
 
     if req.conditions.len() > 0 {
         return Err(UnsupportedRequestError::new(
@@ -218,7 +218,7 @@ pub fn handle<S: Session>(
 
     for r in responses {
         // TODO: TMP remove!
-        info!("File Finder response: {:?}", r);
+        info!("File Finder response: {:#?}", &r);
         session.reply(r)?;
     }
 
