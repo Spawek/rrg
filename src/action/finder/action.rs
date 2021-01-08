@@ -55,13 +55,12 @@ use crate::action::stat::{
 };
 use crate::fs;
 use crate::fs::{list_dir, Entry};
-use crate::session::{self, Session};
+use crate::session::{self, Session, UnsupportedActonParametersError};
 use log::{info, warn};
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
 use rrg_proto::FileFinderResult;
 use rrg_proto::Hash as HashEntry;
-use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -94,41 +93,13 @@ impl super::super::Response for Response {
     }
 }
 
-#[derive(Debug)]
-struct UnsupportedRequestError {
-    message: String,
-}
-
-impl Display for UnsupportedRequestError {
-    fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
-        write!(
-            fmt,
-            "Unsupported client side file finder request error: {}",
-            self.message
-        )
-    }
-}
-
-impl UnsupportedRequestError {
-    /// Creates a new error indicating that the request type is not supported.
-    pub fn new(message: String) -> session::Error {
-        session::Error::Action(Box::new(UnsupportedRequestError { message }))
-    }
-}
-
-impl std::error::Error for UnsupportedRequestError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
-
 fn into_absoute_path(s: String) -> session::Result<PathBuf> {
     let path = PathBuf::from(&s);
     if !path.is_absolute() {
-        return Err(UnsupportedRequestError::new(format!(
+        return Err(UnsupportedActonParametersError::new(format!(
             "Non-absolute paths are not supported: {}",
             &s
-        )));
+        )).into());
     }
     Ok(path)
 }
@@ -186,22 +157,22 @@ pub fn handle<S: Session>(
     info!("File Finder request: {:#?}", &req);
 
     if req.conditions.len() > 0 {
-        return Err(UnsupportedRequestError::new(
+        return Err(UnsupportedActonParametersError::new(
             "conditions parameter is not supported".to_string(),
-        ));
+        ).into());
     }
 
     if req.process_non_regular_files {
-        return Err(UnsupportedRequestError::new(
+        return Err(UnsupportedActonParametersError::new(
             "process_non_regular_files parameter is not supported".to_string(),
-        ));
+        ).into());
     }
 
     if req.xdev_mode != XDev::Local {
-        return Err(UnsupportedRequestError::new(format!(
+        return Err(UnsupportedActonParametersError::new(format!(
             "unsupported XDev mode: {:?}",
             req.xdev_mode
-        )));
+        )).into());
     }
 
     let paths = req
@@ -825,10 +796,6 @@ mod tests {
             .is_some());
     }
 
-    // TODO: change Path inner type to std::path::Path
-    // TODO: test with 2 paths reaching identical element
-    // TODO: test 2 recursive elements throwing an error
-
     #[test]
     fn test_alternatives() {
         let tempdir = tempfile::tempdir().unwrap();
@@ -891,3 +858,4 @@ mod tests {
 // TODO: dev type support
 // TODO: download action
 // TODO: cleanup function order here
+// TODO: 2 recursive elements throwing an error
