@@ -10,7 +10,8 @@
 //! Tasks are resolved by performing filesystem requests and generating
 //! outputs or adding new tasks to the queue.
 
-// Symbolic links support
+// Symbolic links support.
+//
 // There are 2 config values describing intended behavior when a symbolic link
 // is in path:
 //   - `follow_links`: described in the FileFinder proto as:
@@ -55,7 +56,7 @@ use crate::action::stat::{
 use crate::fs;
 use crate::fs::{list_dir, Entry};
 use crate::session::{self, Session};
-use log::warn;
+use log::{info, warn};
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
 use rrg_proto::FileFinderResult;
@@ -181,6 +182,9 @@ pub fn handle<S: Session>(
     session: &mut S,
     req: Request,
 ) -> session::Result<()> {
+    // TODO: TMP remove!
+    info!("File Finder request: {:?}", req);
+
     if req.conditions.len() > 0 {
         return Err(UnsupportedRequestError::new(
             "conditions parameter is not supported".to_string(),
@@ -213,6 +217,8 @@ pub fn handle<S: Session>(
         .flat_map(|x| perform_action(&x, &req));
 
     for r in responses {
+        // TODO: TMP remove!
+        info!("File Finder response: {:?}", r);
         session.reply(r)?;
     }
 

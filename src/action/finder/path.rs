@@ -48,7 +48,7 @@ mod tests {
     fn test_normalize_path_with_cur_dir() {
         let path = PathBuf::new()
             .join(Component::RootDir)
-            .join(Component::Normal(&OsString::from("a"))) // TODO: just "a" instead?
+            .join(Component::Normal(&OsString::from("a")))
             .join(Component::CurDir)
             .join(Component::Normal(&OsString::from("b")));
         assert_eq!(
