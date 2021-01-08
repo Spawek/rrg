@@ -62,12 +62,91 @@ use rrg_proto::file_finder_args::XDev;
 use rrg_proto::FileFinderResult;
 use rrg_proto::Hash as HashEntry;
 use std::path::{Path, PathBuf};
+use sha2::{Sha256, Digest};
+
+
+// TODO: copied from timeline
+/// A type representing unique identifier of a given chunk.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ChunkId {
+    /// A SHA-256 digest of the referenced chunk data.
+    sha256: [u8; 32],
+    offset: usize,
+    length: usize,
+}
+
+impl ChunkId {
+
+    /// Creates a chunk identifier for the given chunk.
+    fn make(chunk: &Chunk, chunk_offset: usize) -> ChunkId {
+        ChunkId {
+            sha256: Sha256::digest(&chunk.data).into(),
+            length: chunk.data.len(),
+            offset: chunk_offset,
+        }
+    }
+
+    // /// Converts the chunk identifier into raw bytes of SHA-256 hash.
+    // fn to_sha256_bytes(self) -> Vec<u8> {
+    //     self.sha256.to_vec()
+    // }
+}
 
 #[derive(Debug)]
-pub enum Response {
+struct DownloadEntry {
+    chunk_ids: Vec<ChunkId>,
+}
+
+impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
+    fn from(e: DownloadEntry) -> rrg_proto::BlobImageDescriptor {
+        rrg_proto::BlobImageDescriptor {
+            chunks: e.chunk_ids.into_iter().map(|x|rrg_proto::BlobImageChunkDescriptor {
+                offset: Some(x.offset as u64),
+                length: Some(x.length as u64),
+                digest: Some(x.sha256.to_vec()),
+            }).collect::<Vec<_>>(),
+            chunk_size: Some(512*1024),  // TODO: make a const
+        }
+    }
+}
+
+/// A type representing a particular chunk of the returned timeline.
+struct Chunk {
+    data: Vec<u8>,
+}
+
+impl Chunk {
+
+    /// Constructs a chunk from the given blob of bytes.
+    fn from_bytes(data: Vec<u8>) -> Chunk {
+        Chunk {
+            data: data,
+        }
+    }
+
+    // /// Returns an identifier of the chunk.
+    // fn id(&self) -> ChunkId {
+    //     ChunkId::of(&self)
+    // }
+}
+
+impl super::super::Response for Chunk {
+
+    const RDF_NAME: Option<&'static str> = Some("DataBlob");
+
+    type Proto = rrg_proto::DataBlob;
+
+    fn into_proto(self) -> rrg_proto::DataBlob {
+        self.data.into()
+    }
+}
+
+#[derive(Debug)]
+enum Response {
     Stat(StatEntry),
     /// GRR Hash action returns also StatEntry, we keep the same behavior.
     Hash(HashEntry, Option<StatEntry>),
+    Download(DownloadEntry, Option<StatEntry>),  // TODO: not sure, but Stat should be mandatory here (and probably in hash) as there is even no filename in the download result
 }
 
 impl super::super::Response for Response {
@@ -79,7 +158,7 @@ impl super::super::Response for Response {
         match self {
             Response::Stat(stat) => FileFinderResult {
                 hash_entry: None,
-                matches: vec![], // this field is never used  // TODO: check if it's used with `contents_regex_match` and `contents_literal_match`
+                matches: vec![], // use with `contents_regex_match` and `contents_literal_match`
                 stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             },
@@ -89,6 +168,12 @@ impl super::super::Response for Response {
                 stat_entry: stat.map(|x| x.into_proto()),
                 transferred_file: None,
             },
+            Response::Download(download, stat) => FileFinderResult {
+                hash_entry: None,
+                matches: vec![],
+                stat_entry: stat.map(|x| x.into_proto()),
+                transferred_file: Some(download.into()),
+            }
         }
     }
 }
@@ -124,7 +209,8 @@ fn perform_stat_action(e: &Entry, req: &Request) -> Option<crate::action::stat::
     }
 }
 
-fn perform_action(e: &Entry, req: &Request) -> Option<Response> {
+// TODO: rename?
+fn perform_action<S: Session>(session: &mut S, e: &Entry, req: &Request) -> session::Result<()> {
     let stat = perform_stat_action(e, &req);
 
     match &req.action {
@@ -132,21 +218,33 @@ fn perform_action(e: &Entry, req: &Request) -> Option<Response> {
             Action::Hash(config) => {
                 let hash = hash(&e.path, &config);
                 if let Some(hash) = hash {
-                    return Some(Response::Hash(hash, stat));
+                    session.reply(Response::Hash(hash, stat))?;
                 }
             }
             Action::Download(_) => {
-                unimplemented!("Download action is not supported");
+                let fake_chunk = "wolololo".as_bytes().to_vec();
+                let mut response = DownloadEntry {
+                    chunk_ids: vec!(),
+                };
+
+                let chunk = Chunk::from_bytes(fake_chunk);
+                let offset = 0; // TODO: fix it
+                let chunk_id = ChunkId::make(&chunk, offset);
+
+                session.send(session::Sink::TRANSFER_STORE, chunk)?;
+                response.chunk_ids.push(chunk_id);
+
+                session.reply(Response::Download(response, stat))?;
             }
         },
         None => {
             if let Some(stat) = stat {
-                return Some(Response::Stat(stat));
+                session.reply(Response::Stat(stat))?;
             }
         }
     };
 
-    return None;
+    Ok(())
 }
 
 pub fn handle<S: Session>(
@@ -182,15 +280,12 @@ pub fn handle<S: Session>(
         .map(into_absoute_path)
         .collect::<session::Result<Vec<_>>>()?;
 
-    let responses = paths.iter()
-        .flat_map(|x| resolve_path(x, req.follow_links))
-        // TODO: put filtering here
-        .flat_map(|x| perform_action(&x, &req));
+    let entries = paths.iter()
+        .flat_map(|x| resolve_path(x, req.follow_links));
+    // TODO: put filtering here
 
-    for r in responses {
-        // TODO: TMP remove!
-        info!("File Finder response: {:#?}", &r);
-        session.reply(r)?;
+    for e in entries {
+        perform_action(session, &e, &req)?;
     }
 
     Ok(())
@@ -439,6 +534,12 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
 
     ret
 }
+
+// Download:
+// grr/client/grr_response_client/client_actions/file_finder_utils/uploading.py
+// DEFAULT_CHUNK_SIZE = 512 * 1024
+// DataBlob is the proto for sending data (with RDF value = TransferStore)
+// is it even this code sending stuff? google3/ops/security/grr/client/grr_response_client/client_actions/standard.py
 
 #[cfg(test)]
 mod tests {
@@ -859,3 +960,5 @@ mod tests {
 // TODO: download action
 // TODO: cleanup function order here
 // TODO: 2 recursive elements throwing an error
+// TODO: do errors like in timeline?
+// TODO: fill matches for `contents_regex_match` and `contents_literal_match` conditions
