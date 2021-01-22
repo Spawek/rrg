@@ -63,7 +63,7 @@ use rrg_proto::file_finder_download_action_options::OversizedFilePolicy;
 use rrg_proto::Hash as HashEntry;
 use rrg_proto::{file_finder_hash_action_options, FileFinderResult};
 use sha2::{Digest, Sha256};
-use std::io::Read;
+use std::io::{Read, Error};
 use std::path::{Path, PathBuf};
 
 // TODO: copied from timeline
@@ -90,6 +90,7 @@ impl ChunkId {
 #[derive(Debug)]
 struct DownloadEntry {
     chunk_ids: Vec<ChunkId>,
+    chunk_size: usize,
 }
 
 impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
@@ -104,7 +105,7 @@ impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
                     digest: Some(x.sha256.to_vec()),
                 })
                 .collect::<Vec<_>>(),
-            chunk_size: Some(512 * 1024), // TODO: make a const
+            chunk_size: Some(e.chunk_size as u64),
         }
     }
 }
@@ -193,7 +194,42 @@ fn perform_stat_action(
     stat(&stat_request)
 }
 
-struct Chunked {}
+fn chunks<R: std::io::Read>(reader: R, chunk_size: usize) -> Chunks<R>
+{
+    Chunks{ bytes: reader.bytes(), chunk_size }
+}
+
+struct Chunks<R: std::io::Read>
+{
+    bytes: std::io::Bytes<R>,
+    chunk_size: usize,
+}
+
+impl<R: std::io::Read> std::iter::Iterator for Chunks<R>
+{
+    type Item = Result<Vec<u8>, std::io::Error>;
+
+    fn next(&mut self) -> Option<Result<Vec<u8>, std::io::Error>> {
+        let mut ret = vec![];
+        for byte in &mut self.bytes {
+            // TODO: use map_err somehow?
+            let byte = match byte{
+                Ok(byte) => byte,
+                Err(err) => return Some(Err(err)),
+            };
+            ret.push(byte);
+
+            if ret.len() == self.chunk_size {
+                return Some(Ok(ret));
+            }
+        }
+        if !ret.is_empty(){
+            return Some(Ok(ret));
+        }
+
+        return None;
+    }
+}
 
 // TODO: rename?
 fn perform_action<S: Session>(
@@ -201,8 +237,9 @@ fn perform_action<S: Session>(
     e: &Entry,
     req: &Request,
 ) -> session::Result<()> {
+    // TODO: solve RETURN_OR_WARN pattern somehow
     let stat = match perform_stat_action(e, &req.stat_options) {
-        Ok(v) => Some(v),
+        Ok(v) => v,
         Err(err) => {
             warn!("Stat failed on path: {} error: {}", e.path.display(), err);
             return Ok(());
@@ -256,27 +293,28 @@ fn perform_action<S: Session>(
                     }
                 };
 
-                for chunk in f.bytes().chunks(config.chunk_size as usize) {
-                    println!("{}", chunk);
+                let mut response = DownloadEntry { chunk_ids: vec![] , chunk_size: config.chunk_size as usize};
+                let reader = std::io::BufReader::new(f);
+                let mut offset = 0;
+                for chunk in chunks(reader, config.chunk_size as usize){   // TODO: change chunk_size type
+                    let chunk = match chunk {
+                        Ok(chunk) => Chunk::from_bytes(chunk),
+                        Err(err) => {
+                            warn!("failed to read file: {}, error: {}", e.path.display(), err);
+                            return Ok(());
+                        }
+                    };
+
+                    response.chunk_ids.push(ChunkId::make(&chunk, offset));
+                    offset = offset + chunk.data.len();
+                    session.send(session::Sink::TRANSFER_STORE, chunk)?;
                 }
-
-                let fake_chunk = "wolololo".as_bytes().to_vec();
-                let mut response = DownloadEntry { chunk_ids: vec![] };
-
-                let chunk = Chunk::from_bytes(fake_chunk);
-                let offset = 0; // TODO: fix it
-                let chunk_id = ChunkId::make(&chunk, offset);
-
-                session.send(session::Sink::TRANSFER_STORE, chunk)?;
-                response.chunk_ids.push(chunk_id);
 
                 session.reply(Response::Download(response, stat))?;
             }
         },
         None => {
-            if let Some(stat) = stat {
-                session.reply(Response::Stat(stat))?;
-            }
+            session.reply(Response::Stat(stat))?;
         }
     };
 
