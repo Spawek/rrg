@@ -59,11 +59,12 @@ use crate::session::{self, Session, UnsupportedActonParametersError};
 use log::{info, warn};
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
-use rrg_proto::FileFinderResult;
+use rrg_proto::file_finder_download_action_options::OversizedFilePolicy;
 use rrg_proto::Hash as HashEntry;
+use rrg_proto::{file_finder_hash_action_options, FileFinderResult};
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use sha2::{Sha256, Digest};
-
 
 // TODO: copied from timeline
 /// A type representing unique identifier of a given chunk.
@@ -76,20 +77,14 @@ struct ChunkId {
 }
 
 impl ChunkId {
-
     /// Creates a chunk identifier for the given chunk.
-    fn make(chunk: &Chunk, chunk_offset: usize) -> ChunkId {
+    fn make(chunk: &Chunk, offset: usize) -> ChunkId {
         ChunkId {
             sha256: Sha256::digest(&chunk.data).into(),
             length: chunk.data.len(),
-            offset: chunk_offset,
+            offset,
         }
     }
-
-    // /// Converts the chunk identifier into raw bytes of SHA-256 hash.
-    // fn to_sha256_bytes(self) -> Vec<u8> {
-    //     self.sha256.to_vec()
-    // }
 }
 
 #[derive(Debug)]
@@ -100,12 +95,16 @@ struct DownloadEntry {
 impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
     fn from(e: DownloadEntry) -> rrg_proto::BlobImageDescriptor {
         rrg_proto::BlobImageDescriptor {
-            chunks: e.chunk_ids.into_iter().map(|x|rrg_proto::BlobImageChunkDescriptor {
-                offset: Some(x.offset as u64),
-                length: Some(x.length as u64),
-                digest: Some(x.sha256.to_vec()),
-            }).collect::<Vec<_>>(),
-            chunk_size: Some(512*1024),  // TODO: make a const
+            chunks: e
+                .chunk_ids
+                .into_iter()
+                .map(|x| rrg_proto::BlobImageChunkDescriptor {
+                    offset: Some(x.offset as u64),
+                    length: Some(x.length as u64),
+                    digest: Some(x.sha256.to_vec()),
+                })
+                .collect::<Vec<_>>(),
+            chunk_size: Some(512 * 1024), // TODO: make a const
         }
     }
 }
@@ -116,22 +115,13 @@ struct Chunk {
 }
 
 impl Chunk {
-
     /// Constructs a chunk from the given blob of bytes.
     fn from_bytes(data: Vec<u8>) -> Chunk {
-        Chunk {
-            data: data,
-        }
+        Chunk { data }
     }
-
-    // /// Returns an identifier of the chunk.
-    // fn id(&self) -> ChunkId {
-    //     ChunkId::of(&self)
-    // }
 }
 
 impl super::super::Response for Chunk {
-
     const RDF_NAME: Option<&'static str> = Some("DataBlob");
 
     type Proto = rrg_proto::DataBlob;
@@ -145,8 +135,8 @@ impl super::super::Response for Chunk {
 enum Response {
     Stat(StatEntry),
     /// GRR Hash action returns also StatEntry, we keep the same behavior.
-    Hash(HashEntry, Option<StatEntry>),
-    Download(DownloadEntry, Option<StatEntry>),  // TODO: not sure, but Stat should be mandatory here (and probably in hash) as there is even no filename in the download result
+    Hash(HashEntry, StatEntry),
+    Download(DownloadEntry, StatEntry),
 }
 
 impl super::super::Response for Response {
@@ -165,15 +155,15 @@ impl super::super::Response for Response {
             Response::Hash(hash, stat) => FileFinderResult {
                 hash_entry: Some(hash),
                 matches: vec![],
-                stat_entry: stat.map(|x| x.into_proto()),
+                stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             },
             Response::Download(download, stat) => FileFinderResult {
                 hash_entry: None,
                 matches: vec![],
-                stat_entry: stat.map(|x| x.into_proto()),
+                stat_entry: Some(stat.into_proto()),
                 transferred_file: Some(download.into()),
-            }
+            },
         }
     }
 }
@@ -184,48 +174,94 @@ fn into_absoute_path(s: String) -> session::Result<PathBuf> {
         return Err(UnsupportedActonParametersError::new(format!(
             "Non-absolute paths are not supported: {}",
             &s
-        )).into());
+        ))
+        .into());
     }
     Ok(path)
 }
 
-fn perform_stat_action(e: &Entry, req: &Request) -> Option<crate::action::stat::Response>{
+fn perform_stat_action(
+    e: &Entry,
+    config: &StatActionOptions,
+) -> session::Result<crate::action::stat::Response> {
     let stat_request = StatRequest {
         path: e.path.to_owned(),
-        collect_ext_attrs: req.stat_options.collect_ext_attrs,
-        follow_symlink: req.stat_options.follow_symlink,
+        collect_ext_attrs: config.collect_ext_attrs,
+        follow_symlink: config.follow_symlink,
     };
 
-    match stat(&stat_request) {
-        Ok(v) => Some(v),
-        Err(err) => {
-            warn!(
-                "Stat action failed on path: {} with error: {}",
-                e.path.display(),
-                err
-            );
-            None
-        }
-    }
+    stat(&stat_request)
 }
 
+struct Chunked {}
+
 // TODO: rename?
-fn perform_action<S: Session>(session: &mut S, e: &Entry, req: &Request) -> session::Result<()> {
-    let stat = perform_stat_action(e, &req);
+fn perform_action<S: Session>(
+    session: &mut S,
+    e: &Entry,
+    req: &Request,
+) -> session::Result<()> {
+    let stat = match perform_stat_action(e, &req.stat_options) {
+        Ok(v) => Some(v),
+        Err(err) => {
+            warn!("Stat failed on path: {} error: {}", e.path.display(), err);
+            return Ok(());
+        }
+    };
 
     match &req.action {
         Some(action) => match action {
             Action::Hash(config) => {
-                let hash = hash(&e.path, &config);
-                if let Some(hash) = hash {
+                if let Some(hash) = hash(&e.path, &config) {
                     session.reply(Response::Hash(hash, stat))?;
                 }
             }
-            Action::Download(_) => {
-                let fake_chunk = "wolololo".as_bytes().to_vec();
-                let mut response = DownloadEntry {
-                    chunk_ids: vec!(),
+            Action::Download(config) => {
+                let metadata = match e.path.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(err) => {
+                        warn!("failed to stat '{}': {}", e.path.display(), err);
+                        return Ok(());
+                    }
                 };
+
+                if metadata.len() > config.max_size {
+                    match config.oversized_file_policy {
+                        OversizedFilePolicy::Skip => {
+                            return Ok(());
+                        }
+                        OversizedFilePolicy::DownloadTruncated => {}
+                        OversizedFilePolicy::HashTruncated => {
+                            let hash_config =  &HashActionOptions{
+                                max_size: config.max_size,
+                                oversized_file_policy: file_finder_hash_action_options::OversizedFilePolicy::HashTruncated,
+                            };
+                            if let Some(hash) = hash(&e.path, &hash_config) {
+                                session.reply(Response::Hash(hash, stat))?;
+                            }
+                            return Ok(());
+                        }
+                    };
+                }
+
+                let mut f = match std::fs::File::open(&e.path) {
+                    Ok(f) => f.take(config.max_size),
+                    Err(err) => {
+                        warn!(
+                            "failed to open file: {}, error: {}",
+                            e.path.display(),
+                            err
+                        );
+                        return Ok(());
+                    }
+                };
+
+                for chunk in f.bytes().chunks(config.chunk_size as usize) {
+                    println!("{}", chunk);
+                }
+
+                let fake_chunk = "wolololo".as_bytes().to_vec();
+                let mut response = DownloadEntry { chunk_ids: vec![] };
 
                 let chunk = Chunk::from_bytes(fake_chunk);
                 let offset = 0; // TODO: fix it
@@ -257,20 +293,23 @@ pub fn handle<S: Session>(
     if req.conditions.len() > 0 {
         return Err(UnsupportedActonParametersError::new(
             "conditions parameter is not supported".to_string(),
-        ).into());
+        )
+        .into());
     }
 
     if req.process_non_regular_files {
         return Err(UnsupportedActonParametersError::new(
             "process_non_regular_files parameter is not supported".to_string(),
-        ).into());
+        )
+        .into());
     }
 
     if req.xdev_mode != XDev::Local {
         return Err(UnsupportedActonParametersError::new(format!(
             "unsupported XDev mode: {:?}",
             req.xdev_mode
-        )).into());
+        ))
+        .into());
     }
 
     let paths = req
@@ -280,8 +319,7 @@ pub fn handle<S: Session>(
         .map(into_absoute_path)
         .collect::<session::Result<Vec<_>>>()?;
 
-    let entries = paths.iter()
-        .flat_map(|x| resolve_path(x, req.follow_links));
+    let entries = paths.iter().flat_map(|x| resolve_path(x, req.follow_links));
     // TODO: put filtering here
 
     for e in entries {
@@ -324,7 +362,7 @@ impl std::iter::Iterator for ResolvePath {
 
     fn next(&mut self) -> Option<Entry> {
         loop {
-            if let Some(v) = self.outputs.pop(){
+            if let Some(v) = self.outputs.pop() {
                 return Some(v);
             }
 
@@ -962,3 +1000,5 @@ mod tests {
 // TODO: 2 recursive elements throwing an error
 // TODO: do errors like in timeline?
 // TODO: fill matches for `contents_regex_match` and `contents_literal_match` conditions
+// TODO: make naming "config/options" consistent
+// TODO: resolve path to another file

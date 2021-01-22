@@ -10,6 +10,7 @@
 use crate::session::{
     parse_enum, time_from_micros, ParseError, ProtoEnum, RegexParseError,
 };
+use log::info;
 use regex::Regex;
 use rrg_proto::{
     FileFinderAccessTimeCondition, FileFinderAction, FileFinderArgs,
@@ -19,7 +20,6 @@ use rrg_proto::{
     FileFinderInodeChangeTimeCondition, FileFinderModificationTimeCondition,
     FileFinderSizeCondition, FileFinderStatActionOptions,
 };
-use log::info;
 use std::convert::TryFrom;
 
 type HashActionOversizedFilePolicy =
@@ -652,7 +652,7 @@ mod tests {
                     ),
                     max_size: Some(123456),
                 }),
-                stat: Some(FileFinderStatActionOptions{
+                stat: Some(FileFinderStatActionOptions {
                     collect_ext_attrs: Some(true),
                     resolve_links: Some(true),
                 }),
@@ -718,7 +718,7 @@ mod tests {
                     use_external_stores: Some(false),
                     chunk_size: Some(5432),
                 }),
-                stat: Some(FileFinderStatActionOptions{
+                stat: Some(FileFinderStatActionOptions {
                     collect_ext_attrs: Some(true),
                     resolve_links: Some(true),
                 }),
