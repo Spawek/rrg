@@ -6,10 +6,10 @@ use log::warn;
 use rrg_proto::file_finder_download_action_options::OversizedFilePolicy as DownloadOversizedFilePolicy;
 use rrg_proto::file_finder_hash_action_options::OversizedFilePolicy as HashOversizedFilePolicy;
 use std::fs::File;
-use std::io::{BufReader, Read, Take};
+use std::io::{BufReader, Read};
 
 #[derive(Debug)]
-pub enum Result<R> {
+pub enum Response<R> {
     /// Download action is not performed and no further action is required.
     Skip(),
     /// File was not downloaded, but hash action must be executed.
@@ -18,16 +18,16 @@ pub enum Result<R> {
     DownloadData(Chunks<R>),
 }
 
-/// Performs `download` action logic and returns file contents to be uploaded.
+/// Performs `download` action logic and returns file contents to be uploaded
+/// or another action to be executed.
 pub fn download(
     entry: &Entry,
     config: &DownloadActionOptions,
-) -> Result<BufReader<Take<File>>> {
-    // TODO: how to hide this data type?
+) -> Response<impl std::io::Read> {
     if entry.metadata.len() > config.max_size {
         match config.oversized_file_policy {
             DownloadOversizedFilePolicy::Skip => {
-                return Result::Skip();
+                return Response::Skip();
             }
             DownloadOversizedFilePolicy::DownloadTruncated => {}
             DownloadOversizedFilePolicy::HashTruncated => {
@@ -36,7 +36,7 @@ pub fn download(
                     oversized_file_policy:
                         HashOversizedFilePolicy::HashTruncated,
                 };
-                return Result::HashRequest(hash_config);
+                return Response::HashRequest(hash_config);
             }
         };
     }
@@ -49,12 +49,12 @@ pub fn download(
                 entry.path.display(),
                 err
             );
-            return Result::Skip();
+            return Response::Skip();
         }
     };
 
     let reader = BufReader::new(file);
-    Result::DownloadData(chunks(reader, config.chunk_size))
+    Response::DownloadData(chunks(reader, config.chunk_size))
 }
 
 fn chunks<R: std::io::Read>(reader: R, chunk_size: u64) -> Chunks<R> {
@@ -120,8 +120,8 @@ mod tests {
         );
 
         let mut chunks = match result {
-            Result::DownloadData(chunks) => chunks,
-            v @ _ => panic!("Unexpected result type: {:?}", v),
+            Response::DownloadData(chunks) => chunks,
+            _ => panic!("Unexpected result type."),
         };
 
         assert_eq!(
@@ -157,8 +157,8 @@ mod tests {
         );
 
         let mut chunks = match result {
-            Result::DownloadData(chunks) => chunks,
-            v @ _ => panic!("Unexpected result type: {:?}", v),
+            Response::DownloadData(chunks) => chunks,
+            _ => panic!("Unexpected result type."),
         };
 
         assert_eq!(
@@ -189,7 +189,7 @@ mod tests {
             },
         );
 
-        assert!(matches!(result, Result::Skip()));
+        assert!(matches!(result, Response::Skip()));
     }
 
     #[test]
@@ -216,7 +216,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Result::HashRequest(HashActionOptions {
+            Response::HashRequest(HashActionOptions {
                 max_size: 5,
                 oversized_file_policy: HashOversizedFilePolicy::HashTruncated,
             })
@@ -246,8 +246,8 @@ mod tests {
         );
 
         let mut chunks = match result {
-            Result::DownloadData(chunks) => chunks,
-            v @ _ => panic!("Unexpected result type: {:?}", v),
+            Response::DownloadData(chunks) => chunks,
+            _ => panic!("Unexpected result type."),
         };
 
         assert_eq!(
