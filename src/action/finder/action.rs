@@ -222,7 +222,7 @@ fn perform_action<S: Session>(
             }
             Action::Download(config) => match download(&entry, &config) {
                 download::Result::Skip() => {}
-                download::Result::HashRequested(config) => {
+                download::Result::HashRequest(config) => {
                     if let Some(hash) = hash(&entry, &config) {
                         session.reply(Response::Hash(hash, stat))?;
                     }
