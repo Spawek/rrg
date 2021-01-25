@@ -43,6 +43,8 @@
 // - `hash` and `download` actions should follow the links.
 
 use super::request::*;
+use crate::action::finder::download;
+use crate::action::finder::download::download;
 use crate::action::finder::groups::expand_groups;
 use crate::action::finder::hash::hash;
 use crate::action::finder::path::normalize;
@@ -59,11 +61,9 @@ use crate::session::{self, Session, UnsupportedActonParametersError};
 use log::{info, warn};
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
-use rrg_proto::file_finder_download_action_options::OversizedFilePolicy;
+use rrg_proto::FileFinderResult;
 use rrg_proto::Hash as HashEntry;
-use rrg_proto::{file_finder_hash_action_options, FileFinderResult};
 use sha2::{Digest, Sha256};
-use std::io::{Read, Error};
 use std::path::{Path, PathBuf};
 
 // TODO: copied from timeline
@@ -72,16 +72,16 @@ use std::path::{Path, PathBuf};
 struct ChunkId {
     /// A SHA-256 digest of the referenced chunk data.
     sha256: [u8; 32],
-    offset: usize,
-    length: usize,
+    offset: u64,
+    length: u64,
 }
 
 impl ChunkId {
     /// Creates a chunk identifier for the given chunk.
-    fn make(chunk: &Chunk, offset: usize) -> ChunkId {
+    fn make(chunk: &Chunk, offset: u64) -> ChunkId {
         ChunkId {
             sha256: Sha256::digest(&chunk.data).into(),
-            length: chunk.data.len(),
+            length: chunk.data.len() as u64,
             offset,
         }
     }
@@ -90,7 +90,7 @@ impl ChunkId {
 #[derive(Debug)]
 struct DownloadEntry {
     chunk_ids: Vec<ChunkId>,
-    chunk_size: usize,
+    chunk_size: u64,
 }
 
 impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
@@ -100,12 +100,12 @@ impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
                 .chunk_ids
                 .into_iter()
                 .map(|x| rrg_proto::BlobImageChunkDescriptor {
-                    offset: Some(x.offset as u64),
-                    length: Some(x.length as u64),
+                    offset: Some(x.offset),
+                    length: Some(x.length),
                     digest: Some(x.sha256.to_vec()),
                 })
                 .collect::<Vec<_>>(),
-            chunk_size: Some(e.chunk_size as u64),
+            chunk_size: Some(e.chunk_size),
         }
     }
 }
@@ -194,54 +194,21 @@ fn perform_stat_action(
     stat(&stat_request)
 }
 
-fn chunks<R: std::io::Read>(reader: R, chunk_size: usize) -> Chunks<R>
-{
-    Chunks{ bytes: reader.bytes(), chunk_size }
-}
-
-struct Chunks<R: std::io::Read>
-{
-    bytes: std::io::Bytes<R>,
-    chunk_size: usize,
-}
-
-impl<R: std::io::Read> std::iter::Iterator for Chunks<R>
-{
-    type Item = Result<Vec<u8>, std::io::Error>;
-
-    fn next(&mut self) -> Option<Result<Vec<u8>, std::io::Error>> {
-        let mut ret = vec![];
-        for byte in &mut self.bytes {
-            // TODO: use map_err somehow?
-            let byte = match byte{
-                Ok(byte) => byte,
-                Err(err) => return Some(Err(err)),
-            };
-            ret.push(byte);
-
-            if ret.len() == self.chunk_size {
-                return Some(Ok(ret));
-            }
-        }
-        if !ret.is_empty(){
-            return Some(Ok(ret));
-        }
-
-        return None;
-    }
-}
-
 // TODO: rename?
 fn perform_action<S: Session>(
     session: &mut S,
-    e: &Entry,
+    entry: &Entry,
     req: &Request,
 ) -> session::Result<()> {
     // TODO: solve RETURN_OR_WARN pattern somehow
-    let stat = match perform_stat_action(e, &req.stat_options) {
+    let stat = match perform_stat_action(entry, &req.stat_options) {
         Ok(v) => v,
         Err(err) => {
-            warn!("Stat failed on path: {} error: {}", e.path.display(), err);
+            warn!(
+                "Stat failed on path: {} error: {}",
+                entry.path.display(),
+                err
+            );
             return Ok(());
         }
     };
@@ -249,69 +216,44 @@ fn perform_action<S: Session>(
     match &req.action {
         Some(action) => match action {
             Action::Hash(config) => {
-                if let Some(hash) = hash(&e.path, &config) {
+                if let Some(hash) = hash(&entry, &config) {
                     session.reply(Response::Hash(hash, stat))?;
                 }
             }
-            Action::Download(config) => {
-                let metadata = match e.path.metadata() {
-                    Ok(metadata) => metadata,
-                    Err(err) => {
-                        warn!("failed to stat '{}': {}", e.path.display(), err);
-                        return Ok(());
+            Action::Download(config) => match download(&entry, &config) {
+                download::Result::Skip() => {}
+                download::Result::HashRequested(config) => {
+                    if let Some(hash) = hash(&entry, &config) {
+                        session.reply(Response::Hash(hash, stat))?;
                     }
-                };
-
-                if metadata.len() > config.max_size {
-                    match config.oversized_file_policy {
-                        OversizedFilePolicy::Skip => {
-                            return Ok(());
-                        }
-                        OversizedFilePolicy::DownloadTruncated => {}
-                        OversizedFilePolicy::HashTruncated => {
-                            let hash_config =  &HashActionOptions{
-                                max_size: config.max_size,
-                                oversized_file_policy: file_finder_hash_action_options::OversizedFilePolicy::HashTruncated,
-                            };
-                            if let Some(hash) = hash(&e.path, &hash_config) {
-                                session.reply(Response::Hash(hash, stat))?;
+                }
+                download::Result::DownloadData(chunks) => {
+                    let mut offset = 0;
+                    let mut response = DownloadEntry {
+                        chunk_size: config.chunk_size,
+                        chunk_ids: vec![],
+                    };
+                    for chunk in chunks {
+                        let chunk = match chunk {
+                            Ok(chunk) => Chunk::from_bytes(chunk),
+                            Err(err) => {
+                                warn!(
+                                    "failed to read file: {}, error: {}",
+                                    entry.path.display(),
+                                    err
+                                );
+                                return Ok(());
                             }
-                            return Ok(());
-                        }
-                    };
-                }
+                        };
 
-                let mut f = match std::fs::File::open(&e.path) {
-                    Ok(f) => f.take(config.max_size),
-                    Err(err) => {
-                        warn!(
-                            "failed to open file: {}, error: {}",
-                            e.path.display(),
-                            err
-                        );
-                        return Ok(());
+                        response.chunk_ids.push(ChunkId::make(&chunk, offset));
+                        offset = offset + chunk.data.len() as u64;
+                        session.send(session::Sink::TRANSFER_STORE, chunk)?;
                     }
-                };
 
-                let mut response = DownloadEntry { chunk_ids: vec![] , chunk_size: config.chunk_size as usize};
-                let reader = std::io::BufReader::new(f);
-                let mut offset = 0;
-                for chunk in chunks(reader, config.chunk_size as usize){   // TODO: change chunk_size type
-                    let chunk = match chunk {
-                        Ok(chunk) => Chunk::from_bytes(chunk),
-                        Err(err) => {
-                            warn!("failed to read file: {}, error: {}", e.path.display(), err);
-                            return Ok(());
-                        }
-                    };
-
-                    response.chunk_ids.push(ChunkId::make(&chunk, offset));
-                    offset = offset + chunk.data.len();
-                    session.send(session::Sink::TRANSFER_STORE, chunk)?;
+                    session.reply(Response::Download(response, stat))?;
                 }
-
-                session.reply(Response::Download(response, stat))?;
-            }
+            },
         },
         None => {
             session.reply(Response::Stat(stat))?;
@@ -360,8 +302,8 @@ pub fn handle<S: Session>(
     let entries = paths.iter().flat_map(|x| resolve_path(x, req.follow_links));
     // TODO: put filtering here
 
-    for e in entries {
-        perform_action(session, &e, &req)?;
+    for entry in entries {
+        perform_action(session, &entry, &req)?;
     }
 
     Ok(())
@@ -610,12 +552,6 @@ fn resolve_constant_task(path: &Path) -> TaskResults {
 
     ret
 }
-
-// Download:
-// grr/client/grr_response_client/client_actions/file_finder_utils/uploading.py
-// DEFAULT_CHUNK_SIZE = 512 * 1024
-// DataBlob is the proto for sending data (with RDF value = TransferStore)
-// is it even this code sending stuff? google3/ops/security/grr/client/grr_response_client/client_actions/standard.py
 
 #[cfg(test)]
 mod tests {
@@ -1032,11 +968,12 @@ mod tests {
 // TODO: GRR bug: /home/spawek/rrg/**/*toml doesn't find /home/spawek/rrg/Cargo.toml
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
 
+// TODO: conditions - important:
+//     fill matches for `contents_regex_match` and `contents_literal_match` conditions
+
 // TODO: dev type support
-// TODO: download action
 // TODO: cleanup function order here
 // TODO: 2 recursive elements throwing an error
 // TODO: do errors like in timeline?
-// TODO: fill matches for `contents_regex_match` and `contents_literal_match` conditions
 // TODO: make naming "config/options" consistent
 // TODO: resolve path to another file
