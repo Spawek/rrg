@@ -61,10 +61,11 @@ use crate::session::{self, Session, UnsupportedActonParametersError};
 use log::{info, warn};
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
-use rrg_proto::FileFinderResult;
+use rrg_proto::{FileFinderResult, BufferReference};
 use rrg_proto::Hash as HashEntry;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use crate::action::finder::condition::check_condition;
 
 // TODO: copied from timeline
 /// A type representing unique identifier of a given chunk.
@@ -134,10 +135,10 @@ impl super::super::Response for Chunk {
 
 #[derive(Debug)]
 enum Response {
-    Stat(StatEntry),
+    Stat(StatEntry, Vec<BufferReference>),
     /// GRR Hash action returns also StatEntry, we keep the same behavior.
-    Hash(HashEntry, StatEntry),
-    Download(DownloadEntry, StatEntry),
+    Hash(HashEntry, StatEntry, Vec<BufferReference>),
+    Download(DownloadEntry, StatEntry, Vec<BufferReference>),
 }
 
 impl super::super::Response for Response {
@@ -147,22 +148,22 @@ impl super::super::Response for Response {
 
     fn into_proto(self) -> FileFinderResult {
         match self {
-            Response::Stat(stat) => FileFinderResult {
-                hash_entry: None,
-                matches: vec![], // use with `contents_regex_match` and `contents_literal_match`
+            Response::Stat(stat, matches) => FileFinderResult {
+                matches,
                 stat_entry: Some(stat.into_proto()),
+                hash_entry: None,
                 transferred_file: None,
             },
-            Response::Hash(hash, stat) => FileFinderResult {
+            Response::Hash(hash, stat, matches) => FileFinderResult {
+                matches,
+                stat_entry: Some(stat.into_proto()),
                 hash_entry: Some(hash),
-                matches: vec![],
-                stat_entry: Some(stat.into_proto()),
                 transferred_file: None,
             },
-            Response::Download(download, stat) => FileFinderResult {
-                hash_entry: None,
-                matches: vec![],
+            Response::Download(download, stat, matches) => FileFinderResult {
+                matches,
                 stat_entry: Some(stat.into_proto()),
+                hash_entry: None,
                 transferred_file: Some(download.into()),
             },
         }
@@ -199,6 +200,7 @@ fn perform_action<S: Session>(
     session: &mut S,
     entry: &Entry,
     req: &Request,
+    matches: Vec<BufferReference>,
 ) -> session::Result<()> {
     // TODO: solve RETURN_OR_WARN pattern somehow
     let stat = match perform_stat_action(entry, &req.stat_options) {
@@ -217,14 +219,14 @@ fn perform_action<S: Session>(
         Some(action) => match action {
             Action::Hash(config) => {
                 if let Some(hash) = hash(&entry, &config) {
-                    session.reply(Response::Hash(hash, stat))?;
+                    session.reply(Response::Hash(hash, stat, matches))?;
                 }
             }
             Action::Download(config) => match download(&entry, &config) {
                 download::Response::Skip() => {}
                 download::Response::HashRequest(config) => {
                     if let Some(hash) = hash(&entry, &config) {
-                        session.reply(Response::Hash(hash, stat))?;
+                        session.reply(Response::Hash(hash, stat, matches))?;
                     }
                 }
                 download::Response::DownloadData(chunks) => {
@@ -251,12 +253,12 @@ fn perform_action<S: Session>(
                         session.send(session::Sink::TRANSFER_STORE, chunk)?;
                     }
 
-                    session.reply(Response::Download(response, stat))?;
+                    session.reply(Response::Download(response, stat, matches))?;
                 }
             },
         },
         None => {
-            session.reply(Response::Stat(stat))?;
+            session.reply(Response::Stat(stat, matches))?;
         }
     };
 
@@ -300,10 +302,17 @@ pub fn handle<S: Session>(
         .collect::<session::Result<Vec<_>>>()?;
 
     let entries = paths.iter().flat_map(|x| resolve_path(x, req.follow_links));
-    // TODO: put filtering here
 
-    for entry in entries {
-        perform_action(session, &entry, &req)?;
+    'entries_loop: for entry in entries {
+        let mut matches = vec![];
+        for condition in &req.conditions {
+            let mut result = check_condition(condition, &entry);
+            if !result.ok {
+                continue 'entries_loop;
+            }
+            matches.append(&mut result.matches);
+        }
+        perform_action(session, &entry, &req, matches)?;
     }
 
     Ok(())
@@ -945,7 +954,7 @@ mod tests {
         assert!(replies
             .iter()
             .find(|response| {
-                if let Response::Stat(entry) = response {
+                if let Response::Stat(entry, _) = response {
                     entry.path == f1
                 } else {
                     false
@@ -955,7 +964,7 @@ mod tests {
         assert!(replies
             .iter()
             .find(|response| {
-                if let Response::Stat(entry) = response {
+                if let Response::Stat(entry, _) = response {
                     entry.path == f2
                 } else {
                     false
@@ -977,3 +986,4 @@ mod tests {
 // TODO: do errors like in timeline?
 // TODO: make naming "config/options" consistent
 // TODO: resolve path to another file
+// TODO: response to separate file
