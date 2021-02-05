@@ -15,7 +15,7 @@ pub struct ChunksConfig {
     /// than the `bytes_per_chunk`
     pub bytes_per_chunk: usize,
     /// A number of bytes that the next chunk will share with the previous one.
-    pub overlap_bytes: usize,  // TODO: change to usize
+    pub overlap_bytes: usize,
 }
 
 impl<R: std::io::Read> std::iter::Iterator for Chunks<R> {

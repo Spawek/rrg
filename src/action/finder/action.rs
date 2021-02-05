@@ -272,13 +272,6 @@ pub fn handle<S: Session>(
     // TODO: TMP remove!
     info!("File Finder request: {:#?}", &req);
 
-    if req.conditions.len() > 0 {
-        return Err(UnsupportedActonParametersError::new(
-            "conditions parameter is not supported".to_string(),
-        )
-        .into());
-    }
-
     if req.process_non_regular_files {
         return Err(UnsupportedActonParametersError::new(
             "process_non_regular_files parameter is not supported".to_string(),
@@ -305,6 +298,7 @@ pub fn handle<S: Session>(
 
     'entries_loop: for entry in entries {
         let mut matches = vec![];
+        // TODO: to some foo
         for condition in &req.conditions {
             let mut result = check_condition(condition, &entry);
             if !result.ok {

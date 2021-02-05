@@ -11,7 +11,6 @@ use crate::session::{
     parse_enum, time_from_micros, ParseError, ProtoEnum, RegexParseError,
 };
 use log::info;
-use regex::Regex;
 use rrg_proto::{
     FileFinderAccessTimeCondition, FileFinderAction, FileFinderArgs,
     FileFinderCondition, FileFinderContentsLiteralMatchCondition,
@@ -119,7 +118,7 @@ pub enum MatchMode {
 
 #[derive(Debug)]
 pub struct ContentsRegexMatchConditionOptions {
-    pub regex: Regex,
+    pub regex: regex::bytes::Regex,
     pub mode: MatchMode,
     pub bytes_before: u32,
     pub bytes_after: u32,
@@ -360,13 +359,13 @@ fn get_ext_flags_condition(
     conditions
 }
 
-fn parse_regex(bytes: Vec<u8>) -> Result<Regex, ParseError> {
+fn parse_regex(bytes: Vec<u8>) -> Result<regex::bytes::Regex, ParseError> {
     let str = match std::str::from_utf8(bytes.as_slice()) {
         Ok(v) => Ok(v),
         Err(e) => Err(ParseError::Malformed(Box::new(e))),
     }?;
 
-    match Regex::new(str) {
+    match regex::bytes::Regex::new(str) {
         Ok(v) => Ok(v),
         Err(e) => Err(RegexParseError {
             raw_data: bytes,
