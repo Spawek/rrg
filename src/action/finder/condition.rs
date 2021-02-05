@@ -103,7 +103,9 @@ pub fn check_condition(condition: &Condition, entry: &Entry)  -> ConditionResult
             ConditionResult::ok(entry.metadata.len() <= *expected)
         }
         Condition::ExtFlagsLinuxBitsSet(expected) => {
-            ConditionResult::ok(true) // TODO: implement // reference: grr/core/grr_response_core/lib/util/filesystem.py  // extflags vs ext attributes
+            #[cfg(target_family = "unix")]
+
+                ConditionResult::ok(true) // TODO: implement // reference: grr/core/grr_response_core/lib/util/filesystem.py  // extflags vs ext attributes
         }
         Condition::ExtFlagsLinuxBitsUnset(expected) => {
             ConditionResult::ok(true) // TODO: implement me
