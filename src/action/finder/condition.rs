@@ -4,6 +4,7 @@ use crate::fs::Entry;
 use log::warn;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::MetadataExt;
+use crate::fs::linux::flags;
 
 pub struct ConditionResult {
     /// True if the condition was met.
@@ -104,16 +105,48 @@ pub fn check_condition(condition: &Condition, entry: &Entry)  -> ConditionResult
         }
         Condition::ExtFlagsLinuxBitsSet(expected) => {
             #[cfg(target_family = "unix")]
+            if let Ok(flags) = flags(&entry.path){
+                ConditionResult::ok(flags & expected == flags)
+            }
+            else {
+                warn!("failed to obtain extended flags for file: {}",
+                      entry.path.display());
+                return ConditionResult::ok(true);
+            };
 
-                ConditionResult::ok(true) // TODO: implement // reference: grr/core/grr_response_core/lib/util/filesystem.py  // extflags vs ext attributes
+            ConditionResult::ok(true)
         }
         Condition::ExtFlagsLinuxBitsUnset(expected) => {
-            ConditionResult::ok(true) // TODO: implement me
+            #[cfg(target_family = "unix")]
+            if let Ok(flags) = flags(&entry.path){
+                ConditionResult::ok(flags & expected == 0)
+            }
+            else {
+                warn!("failed to obtain extended flags for file: {}",
+                      entry.path.display());
+                return ConditionResult::ok(true);
+            };
+
+            ConditionResult::ok(true)
         }
-        // Condition::ExtFlagsOsxBitsSet(expected) => {}
-        // Condition::ExtFlagsOsxBitsUnset(expected) => {}
-        // Condition::ContentsRegexMatch(_) => {}
-        // Condition::ContentsLiteralMatch(_) => {}
+        Condition::ExtFlagsOsxBitsSet(expected) => {
+            // TODO: not implemented
+            ConditionResult::ok(true)
+        }
+        Condition::ExtFlagsOsxBitsUnset(expected) => {
+            // TODO: not implemented
+            ConditionResult::ok(true)
+        }
+        Condition::ContentsRegexMatch(options) => {
+            // options.
+            // options.mode
+            // let regex = options.regex;
+            // regex.
+            ConditionResult::ok(true)
+        }
+        Condition::ContentsLiteralMatch(_) => {
+            ConditionResult::ok(true)
+        }
     }
 }
 
@@ -125,3 +158,6 @@ pub fn time_from_nanos(
     std::time::UNIX_EPOCH
         .checked_add(std::time::Duration::from_nanos(nanos))
 }
+
+
+// TODO: maybe split conditions to "stat_condition" (returning bool) and "match_condition" (returning vec<matches>)
