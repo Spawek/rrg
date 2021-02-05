@@ -90,7 +90,7 @@ pub struct DownloadActionOptions {
     /// should be true unless the external checks are misbehaving.
     pub use_external_stores: bool,
     /// Number of bytes per chunk that the downloaded file is divided into.
-    pub chunk_size: u64,
+    pub chunk_size: usize,
 }
 
 #[derive(Debug)]
@@ -183,7 +183,7 @@ impl TryFrom<FileFinderDownloadActionOptions> for Action {
             oversized_file_policy: parse_enum(proto.oversized_file_policy)?,
             max_size: proto.max_size(),
             use_external_stores: proto.use_external_stores(),
-            chunk_size: proto.chunk_size(),
+            chunk_size: proto.chunk_size() as usize,
         }))
     }
 }

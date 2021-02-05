@@ -138,6 +138,9 @@ pub fn check_condition(condition: &Condition, entry: &Entry)  -> ConditionResult
             ConditionResult::ok(true)
         }
         Condition::ContentsRegexMatch(options) => {
+            // OVERLAP_SIZE = 1024 * 1024
+            // CHUNK_SIZE = 10 * 1024 * 1024
+
             // options.
             // options.mode
             // let regex = options.regex;
