@@ -38,57 +38,56 @@ pub fn check_condition(
     entry: &Entry,
 ) -> ConditionResult {
     match condition {
-        Condition::MinModificationTime(expected) => {
+        Condition::ModificationTime{min, max} => {
+            let mut ok = true;
             if let Ok(actual) = entry.metadata.modified() {
-                ConditionResult::ok(actual >= *expected)
+                if let Some(min) = min{
+                    ok &= actual >= *min;
+                }
+                if let Some(max) = max {
+                    ok &= actual <= *max;
+                }
             } else {
                 warn!(
                     "failed to obtain modification time for file: {}",
                     entry.path.display()
                 );
-                ConditionResult::ok(true)
             }
+
+            ConditionResult::ok(ok)
         }
-        Condition::MaxModificationTime(expected) => {
-            if let Ok(actual) = entry.metadata.modified() {
-                ConditionResult::ok(actual <= *expected)
-            } else {
-                warn!(
-                    "failed to obtain modification time for file: {}",
-                    entry.path.display()
-                );
-                ConditionResult::ok(true)
-            }
-        }
-        Condition::MinAccessTime(expected) => {
+
+        Condition::AccessTime{min, max} => {
+            let mut ok = true;
             if let Ok(actual) = entry.metadata.accessed() {
-                ConditionResult::ok(actual >= *expected)
+                if let Some(min) = min{
+                    ok &= actual >= *min;
+                }
+                if let Some(max) = max {
+                    ok &= actual <= *max;
+                }
             } else {
                 warn!(
                     "failed to obtain access time for file: {}",
                     entry.path.display()
                 );
-                ConditionResult::ok(true)
             }
+
+            ConditionResult::ok(ok)
         }
-        Condition::MaxAccessTime(expected) => {
-            if let Ok(actual) = entry.metadata.accessed() {
-                ConditionResult::ok(actual <= *expected)
-            } else {
-                warn!(
-                    "failed to obtain access time for file: {}",
-                    entry.path.display()
-                );
-                ConditionResult::ok(true)
-            }
-        }
-        Condition::MinInodeChangeTime(expected) => {
-            let mut ret = true;
+
+        Condition::InodeChangeTime{min, max} => {
+            let mut ok = true;
 
             #[cfg(target_family = "unix")]
             if let Some(actual) = time_from_nanos(entry.metadata.ctime() as u64)
             {
-                ret = actual >= *expected;
+                if let Some(min) = min{
+                    ok &= actual >= *min;
+                }
+                if let Some(max) = max{
+                    ok &= actual <= *max;
+                }
             } else {
                 warn!(
                     "failed to obtain inode change time for file: {}",
@@ -96,36 +95,34 @@ pub fn check_condition(
                 );
             };
 
-            ConditionResult::ok(ret)
+            ConditionResult::ok(ok)
         }
-        Condition::MaxInodeChangeTime(expected) => {
-            let mut ret = true;
 
-            #[cfg(target_family = "unix")]
-            if let Some(actual) = time_from_nanos(entry.metadata.ctime() as u64)
-            {
-                ret = actual <= *expected;
-            } else {
-                warn!(
-                    "failed to obtain inode change time for file: {}",
-                    entry.path.display()
-                );
-            };
+        Condition::Size{min, max} => {
+            let mut ok = true;
 
-            ConditionResult::ok(ret)
+            if let Some(min) = min {
+                ok &= entry.metadata.len() >= *min;
+            }
+
+            if let Some(max) = max {
+                ok &= entry.metadata.len() <= *max;
+            }
+
+            ConditionResult::ok(ok)
         }
-        Condition::MinSize(expected) => {
-            ConditionResult::ok(entry.metadata.len() >= *expected)
-        }
-        Condition::MaxSize(expected) => {
-            ConditionResult::ok(entry.metadata.len() <= *expected)
-        }
-        Condition::ExtFlagsLinuxBitsSet(expected) => {
+
+        Condition::ExtFlagsLinux{bits_set, bits_unset} => {
             let mut ret = true;
 
             #[cfg(target_family = "unix")]
             if let Ok(flags) = flags(&entry.path) {
-                ret = flags & expected == flags;
+                if let Some(bits_set) = bits_set {
+                    ret &= flags & bits_set == flags;
+                }
+                if let Some(bits_unset) = bits_unset {
+                    ret &= flags & bits_unset == 0;
+                }
             } else {
                 warn!(
                     "failed to obtain extended flags for file: {}",
@@ -135,29 +132,12 @@ pub fn check_condition(
 
             ConditionResult::ok(ret)
         }
-        Condition::ExtFlagsLinuxBitsUnset(expected) => {
-            let mut ret = true;
 
-            #[cfg(target_family = "unix")]
-            if let Ok(flags) = flags(&entry.path) {
-                ret = flags & expected == 0;
-            } else {
-                warn!(
-                    "failed to obtain extended flags for file: {}",
-                    entry.path.display()
-                );
-            };
-
-            ConditionResult::ok(ret)
-        }
-        Condition::ExtFlagsOsxBitsSet(_) => {
+        Condition::ExtFlagsOsx{..} => {
             // TODO: not implemented
             ConditionResult::ok(true)
         }
-        Condition::ExtFlagsOsxBitsUnset(_) => {
-            // TODO: not implemented
-            ConditionResult::ok(true)
-        }
+
         Condition::ContentsRegexMatch(config) => {
             let chunks = get_file_chunks(&entry.path, &GetFileChunksConfig{
                 start_offset: config.start_offset,
@@ -232,3 +212,5 @@ mod tests {
     fn test_001() {
     }
 }
+
+// TODO: change regex condition to be a separate field in request
