@@ -14,14 +14,6 @@
 //!
 //! Expression expansion (like `%%hostname%%` visible in the GRR Admin UI)
 //! is performed on the server side, so it's out of scope of this handler.
-//!
-//! Compontents:
-//! - `action.rs` defines a handler and covers the main functionality.
-//! - `request.rs` parses protobuf request to the internal representation.
-//! - `glob.rs` converts glob expressions to `regex::Regex`.
-//! - `groups.rs` resolves paths alternatives.
-//! - `task.rs` parses paths to internal representation.
-//! - `hash.rs` `hash` action support.
 
 pub mod action;
 pub mod download;
@@ -33,6 +25,7 @@ pub mod request;
 pub mod task;
 pub mod condition;
 pub mod chunks;
+pub mod file;
 
 // Life of a path:
 // - in the input proto FileFinderArgs::paths are `String`.

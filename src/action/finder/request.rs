@@ -107,7 +107,6 @@ pub enum Condition {
     ExtFlagsOsxBitsSet(u32),
     ExtFlagsOsxBitsUnset(u32),
     ContentsRegexMatch(ContentsRegexMatchConditionOptions),
-    ContentsLiteralMatch(ContentsLiteralMatchConditionOptions),
 }
 
 #[derive(Debug, PartialEq)]
@@ -134,8 +133,6 @@ pub struct ContentsLiteralMatchConditionOptions {
     pub length: u64,
     pub bytes_before: u32,
     pub bytes_after: u32,
-    pub xor_in_key: u32,
-    pub xor_out_key: u32,
 }
 
 impl From<FileFinderStatActionOptions> for StatActionOptions {
@@ -375,6 +372,21 @@ fn parse_regex(bytes: Vec<u8>) -> Result<regex::bytes::Regex, ParseError> {
     }
 }
 
+fn constant_literal_to_regex(bytes: Vec<u8>) -> Result<regex::bytes::Regex, ParseError> {
+    let mut str = String::new();
+    for b in &bytes {
+        str.push_str(&format!(r"\x{:x}", b));
+    }
+    match regex::bytes::Regex::new(&str) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(RegexParseError {
+            raw_data: bytes,
+            error: e,
+        }
+        .into()),
+    }
+}
+
 fn get_contents_regex_match_condition(
     proto: Option<FileFinderContentsRegexMatchCondition>,
 ) -> Result<Vec<Condition>, ParseError> {
@@ -406,6 +418,8 @@ fn get_contents_regex_match_condition(
     Ok(vec![Condition::ContentsRegexMatch(ret)])
 }
 
+/// Literal match is performed by generating a regex condition as they have
+/// the same semantics.
 fn get_contents_literal_match_condition(
     proto: Option<FileFinderContentsLiteralMatchCondition>,
 ) -> Result<Vec<Condition>, ParseError> {
@@ -418,27 +432,29 @@ fn get_contents_literal_match_condition(
     let bytes_after = options.bytes_after();
     let start_offset = options.start_offset();
     let length = options.length();
-    let xor_in_key = options.xor_in_key();
-    let xor_out_key = options.xor_out_key();
     let mode = MatchMode::from(parse_enum::<LiteralMatchMode>(options.mode)?);
 
-    let literal = match options.literal {
+    if options.xor_in_key.is_some() || options.xor_out_key.is_some() {
+        return Err(ParseError::malformed(
+            "File Finder request does not support xor_in_key and xor_out_key options.",
+        ));
+    }
+
+    let regex = match options.literal {
         None => return Ok(vec![]),
-        Some(v) => v,
+        Some(v) => constant_literal_to_regex(v)?,
     };
 
-    let ret = ContentsLiteralMatchConditionOptions {
-        literal,
+    let ret = ContentsRegexMatchConditionOptions {
+        regex,
         mode,
         bytes_before,
         bytes_after,
         start_offset,
         length,
-        xor_in_key,
-        xor_out_key,
     };
 
-    Ok(vec![Condition::ContentsLiteralMatch(ret)])
+    Ok(vec![Condition::ContentsRegexMatch(ret)])
 }
 
 fn get_conditions(
@@ -1358,8 +1374,8 @@ mod tests {
                         length: Some(8),
                         bytes_before: Some(15),
                         bytes_after: Some(18),
-                        xor_in_key: Some(78),
-                        xor_out_key: Some(98),
+                        xor_in_key: None,
+                        xor_out_key: None,
                     },
                 ),
                 ..Default::default()
@@ -1370,15 +1386,13 @@ mod tests {
 
         assert_eq!(request.conditions.len(), 1);
         match request.conditions.first().unwrap() {
-            Condition::ContentsLiteralMatch(options) => {
-                assert_eq!(options.literal, vec![99, 98, 97]);
+            Condition::ContentsRegexMatch(options) => {
+                assert_eq!(options.regex.as_str(), r"\x63\x62\x61");
                 assert_eq!(options.mode, MatchMode::AllHits);
                 assert_eq!(options.start_offset, 6);
                 assert_eq!(options.length, 8);
                 assert_eq!(options.bytes_before, 15);
                 assert_eq!(options.bytes_after, 18);
-                assert_eq!(options.xor_in_key, 78);
-                assert_eq!(options.xor_out_key, 98);
             }
             v @ _ => panic!("Unexpected condition type: {:?}", v),
         }

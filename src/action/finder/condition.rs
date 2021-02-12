@@ -1,14 +1,15 @@
-use crate::action::finder::chunks::{chunks, ChunksConfig};
+use crate::action::finder::file::{get_file_chunks, GetFileChunksConfig};
 use crate::action::finder::request::{Condition, MatchMode};
 use crate::fs::linux::flags;
 use crate::fs::Entry;
 use log::warn;
-use rrg_proto::{BufferReference, PathSpec};
+use rrg_proto::BufferReference;
 use std::cmp::{max, min};
-use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::MetadataExt;
+
+const BYTES_PER_CHUNK: usize = 10 * 1024 * 1024;
+const OVERLAP_BYTES: usize = 1024 * 1024;
 
 pub struct ConditionResult {
     /// True if the condition was met.
@@ -158,42 +159,16 @@ pub fn check_condition(
             ConditionResult::ok(true)
         }
         Condition::ContentsRegexMatch(config) => {
-            const BYTES_PER_CHUNK: usize = 10 * 1024 * 1024;
-            const OVERLAP_BYTES: usize = 1024 * 1024;
-
-            // TODO: separate foo
-            let file = match File::open(&entry.path) {
-                Ok(mut f) => {
-                    if let Err(err) =
-                        f.seek(SeekFrom::Start(config.start_offset as u64))
-                    {
-                        warn!(
-                            "failed to seek in file: {}, error: {}",
-                            entry.path.display(),
-                            err
-                        );
-                        return ConditionResult::ok(false);
-                    }
-                    f.take(config.length)
-                }
-                Err(err) => {
-                    warn!(
-                        "failed to open file: {}, error: {}",
-                        entry.path.display(),
-                        err
-                    );
-                    return ConditionResult::ok(false);
-                }
+            let chunks = get_file_chunks(&entry.path, &GetFileChunksConfig{
+                start_offset: config.start_offset,
+                max_read_bytes: config.length,
+                bytes_per_chunk: BYTES_PER_CHUNK,
+                overlap_bytes: OVERLAP_BYTES,
+            });
+            let chunks = match chunks {
+                Some(chunks) => chunks,
+                None => return ConditionResult::ok(false),
             };
-
-            let reader = BufReader::new(file);
-            let chunks = chunks(
-                reader,
-                ChunksConfig {
-                    bytes_per_chunk: BYTES_PER_CHUNK,
-                    overlap_bytes: OVERLAP_BYTES,
-                },
-            );
 
             let mut matches = vec![];
             let mut offset = 0;
@@ -202,7 +177,7 @@ pub fn check_condition(
                     Ok(chunk) => chunk,
                     Err(err) => {
                         warn!(
-                            "failed to read file: {}, error: {}",
+                            "failed to read chunk from file: {}, error: {}",
                             entry.path.display(),
                             err
                         );
@@ -222,11 +197,7 @@ pub fn check_condition(
                         length: Some((end - start) as u64),
                         callback: None,
                         data: Some(data),
-                        pathspec: Some(PathSpec {
-                            // TODO: simplify this one
-                            path: None,
-                            ..Default::default()
-                        }),
+                        pathspec: Some(entry.path.clone().into()),
                     });
 
                     if matches!(config.mode, MatchMode::FirstHit) {
@@ -241,7 +212,6 @@ pub fn check_condition(
                 matches,
             }
         }
-        Condition::ContentsLiteralMatch(_) => ConditionResult::ok(true),
     }
 }
 
@@ -252,3 +222,13 @@ pub fn time_from_nanos(nanos: u64) -> Option<std::time::SystemTime> {
 }
 
 // TODO: maybe split conditions to "stat_condition" (returning bool) and "match_condition" (returning vec<matches>)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action::Request as _;
+
+    #[test]
+    fn test_001() {
+    }
+}
