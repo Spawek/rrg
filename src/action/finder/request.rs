@@ -131,8 +131,8 @@ pub enum MatchMode {
 pub struct ContentsMatchCondition {
     pub regex: regex::bytes::Regex,
     pub mode: MatchMode,
-    pub bytes_before: u32,
-    pub bytes_after: u32,
+    pub bytes_before: usize,
+    pub bytes_after: usize,
     pub start_offset: u64,
     pub length: u64,
 }
@@ -410,8 +410,8 @@ fn get_contents_regex_match_condition(
         None => return Ok(None),
     };
 
-    let bytes_before = options.bytes_before();
-    let bytes_after = options.bytes_after();
+    let bytes_before = options.bytes_before() as usize;
+    let bytes_after = options.bytes_after() as usize;
     let start_offset = options.start_offset();
     let length = options.length();
     let mode = MatchMode::from(parse_enum::<RegexMatchMode>(options.mode)?);
@@ -441,8 +441,8 @@ fn get_contents_literal_match_condition(
         None => return Ok(None),
     };
 
-    let bytes_before = options.bytes_before();
-    let bytes_after = options.bytes_after();
+    let bytes_before = options.bytes_before() as usize;
+    let bytes_after = options.bytes_after() as usize;
     let start_offset = options.start_offset();
     let length = options.length();
     let mode = MatchMode::from(parse_enum::<LiteralMatchMode>(options.mode)?);

@@ -60,7 +60,7 @@ fn check_condition(condition: &Condition, entry: &Entry) -> bool {
         Condition::AccessTime { min, max } => {
             let actual = ack! {
                 entry.metadata.accessed(),
-                error: "failed to obtain access time";
+                error: "failed to obtain access time"
             };
             match actual {
                 Some(actual) => is_in_range(&actual, (min, max)),
@@ -164,9 +164,9 @@ fn matches(
         };
 
         for m in condition.regex.find_iter(chunk.as_slice()) {
-            let start = max(m.start() - condition.bytes_before as usize, 0);
+            let start = max(m.start() - condition.bytes_before, 0);
             let end =
-                min(m.end() + condition.bytes_after as usize, chunk.len());
+                min(m.end() + condition.bytes_after, chunk.len());
             let data = chunk[start..end].to_vec();
 
             matches.push(BufferReference {
