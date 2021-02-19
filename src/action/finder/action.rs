@@ -65,7 +65,7 @@ use rrg_proto::{FileFinderResult, BufferReference};
 use rrg_proto::Hash as HashEntry;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use crate::action::finder::condition::check_condition;
+use crate::action::finder::condition::{find_matches, check_conditions};
 
 // TODO: copied from timeline
 /// A type representing unique identifier of a given chunk.
@@ -296,16 +296,16 @@ pub fn handle<S: Session>(
 
     let entries = paths.iter().flat_map(|x| resolve_path(x, req.follow_links));
 
-    'entries_loop: for entry in entries {
-        let mut matches = vec![];
-        // TODO: to some foo
-        for condition in &req.conditions {
-            let mut result = check_condition(condition, &entry);
-            if !result.ok {
-                continue 'entries_loop;
-            }
-            matches.append(&mut result.matches);
+    for entry in entries {
+        if !check_conditions(&req.conditions, &entry){
+            continue;
         }
+
+        let matches = find_matches(&req.contents_match_conditions, &entry);
+        if req.contents_match_conditions.len() > 0 && matches.is_empty() {
+            continue;
+        }
+
         perform_action(session, &entry, &req, matches)?;
     }
 
@@ -934,6 +934,7 @@ mod tests {
             },
             action: None,
             conditions: vec![],
+            contents_match_conditions: vec![],
             process_non_regular_files: false,
             follow_links: false,
             xdev_mode: XDev::Local,
