@@ -577,7 +577,6 @@ impl super::super::Request for Request {
 mod tests {
     use super::*;
     use crate::action::Request as _;
-    use crate::action::finder::request::ContentsMatchCondition;
 
     #[test]
     fn test_empty_request() {
