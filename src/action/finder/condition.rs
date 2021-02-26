@@ -12,9 +12,6 @@ use std::fs::Metadata;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::MetadataExt;
 
-const BYTES_PER_CHUNK: u64 = 10 * 1024 * 1024;
-const OVERLAP_BYTES: u64 = 1024 * 1024;
-
 /// Returns true if all conditions were met.
 /// If the data required for checking the condition cannot be obtained then
 /// the condition is assumed to be met.
@@ -135,6 +132,9 @@ fn matches(
     condition: &ContentsMatchCondition,
     entry: &Entry,
 ) -> Vec<BufferReference> {
+    const BYTES_PER_CHUNK: u64 = 10 * 1024 * 1024;
+    const OVERLAP_BYTES: u64 = 1024 * 1024;
+
     let chunks = get_file_chunks(
         &entry.path,
         &GetFileChunksConfig {
