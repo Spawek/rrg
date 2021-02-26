@@ -20,6 +20,7 @@ use rrg_proto::{
     FileFinderSizeCondition, FileFinderStatActionOptions,
 };
 use std::convert::TryFrom;
+use std::fmt::Write;
 
 type HashActionOversizedFilePolicy =
     rrg_proto::file_finder_hash_action_options::OversizedFilePolicy;
@@ -390,7 +391,7 @@ fn constant_literal_to_regex(
 ) -> Result<regex::bytes::Regex, ParseError> {
     let mut str = String::new();
     for b in bytes {
-        str.push_str(&format!(r"\x{:x}", b));
+        write!(&mut str, r"\x{:x}", b);
     }
     match regex::bytes::Regex::new(&str) {
         Ok(v) => Ok(v),
