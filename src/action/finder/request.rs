@@ -93,7 +93,7 @@ pub struct DownloadActionOptions {
     /// should be true unless the external checks are misbehaving.
     pub use_external_stores: bool,
     /// Number of bytes per chunk that the downloaded file is divided into.
-    pub chunk_size: usize,
+    pub chunk_size: u64,
 }
 
 #[derive(Debug)]
@@ -132,8 +132,8 @@ pub enum MatchMode {
 pub struct ContentsMatchCondition {
     pub regex: regex::bytes::Regex,
     pub mode: MatchMode,
-    pub bytes_before: usize,
-    pub bytes_after: usize,
+    pub bytes_before: u64,
+    pub bytes_after: u64,
     pub start_offset: u64,
     pub length: u64,
 }
@@ -182,7 +182,7 @@ impl TryFrom<FileFinderDownloadActionOptions> for Action {
             oversized_file_policy: parse_enum(proto.oversized_file_policy)?,
             max_size: proto.max_size(),
             use_external_stores: proto.use_external_stores(),
-            chunk_size: proto.chunk_size() as usize,
+            chunk_size: proto.chunk_size(),
         }))
     }
 }
@@ -391,7 +391,8 @@ fn constant_literal_to_regex(
 ) -> Result<regex::bytes::Regex, ParseError> {
     let mut str = String::new();
     for b in bytes {
-        write!(&mut str, r"\x{:x}", b);
+        // Unwrap used on a string which can't return I/O error.
+        write!(&mut str, r"\x{:x}", b).unwrap();
     }
     match regex::bytes::Regex::new(&str) {
         Ok(v) => Ok(v),
@@ -411,8 +412,8 @@ fn get_contents_regex_match_condition(
         None => return Ok(None),
     };
 
-    let bytes_before = options.bytes_before() as usize;
-    let bytes_after = options.bytes_after() as usize;
+    let bytes_before = options.bytes_before() as u64;
+    let bytes_after = options.bytes_after() as u64;
     let start_offset = options.start_offset();
     let length = options.length();
     let mode = MatchMode::from(parse_enum::<RegexMatchMode>(options.mode)?);
@@ -442,8 +443,8 @@ fn get_contents_literal_match_condition(
         None => return Ok(None),
     };
 
-    let bytes_before = options.bytes_before() as usize;
-    let bytes_after = options.bytes_after() as usize;
+    let bytes_before = options.bytes_before() as u64;
+    let bytes_after = options.bytes_after() as u64;
     let start_offset = options.start_offset();
     let length = options.length();
     let mode = MatchMode::from(parse_enum::<LiteralMatchMode>(options.mode)?);

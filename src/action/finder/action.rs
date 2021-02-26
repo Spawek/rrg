@@ -91,7 +91,7 @@ impl ChunkId {
 #[derive(Debug)]
 struct DownloadEntry {
     chunk_ids: Vec<ChunkId>,
-    chunk_size: usize,
+    chunk_size: u64,
 }
 
 impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
@@ -106,7 +106,7 @@ impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
                     digest: Some(x.sha256.to_vec()),
                 })
                 .collect::<Vec<_>>(),
-            chunk_size: Some(e.chunk_size as u64),
+            chunk_size: Some(e.chunk_size),
         }
     }
 }

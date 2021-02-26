@@ -13,9 +13,9 @@ pub struct Chunks<R> {
 pub struct ChunksConfig {
     /// Desired number of bytes in chunks. Only the last chunk can be smaller
     /// than the `bytes_per_chunk`
-    pub bytes_per_chunk: usize,
+    pub bytes_per_chunk: u64,
     /// A number of bytes that the next chunk will share with the previous one.
-    pub overlap_bytes: usize,
+    pub overlap_bytes: u64,
 }
 
 impl<R: std::io::Read> std::iter::Iterator for Chunks<R> {
@@ -32,8 +32,8 @@ impl<R: std::io::Read> std::iter::Iterator for Chunks<R> {
             bytes_read = true;
             ret.push(byte);
 
-            if ret.len() == self.config.bytes_per_chunk {
-                let overlap_start = ret.len() - self.config.overlap_bytes;
+            if ret.len() == self.config.bytes_per_chunk as usize {
+                let overlap_start = ret.len() - self.config.overlap_bytes as usize;
                 self.overlap_data = Vec::from(&ret[overlap_start..]);
                 return Some(Ok(ret));
             }

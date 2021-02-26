@@ -34,8 +34,8 @@ pub fn open_file(path: &Path, offset: u64, max_size: u64) -> Option<Take<File>> 
 pub struct GetFileChunksConfig {
     pub start_offset: u64,
     pub max_read_bytes: u64,
-    pub bytes_per_chunk: usize,
-    pub overlap_bytes: usize,
+    pub bytes_per_chunk: u64,
+    pub overlap_bytes: u64,
 }
 
 pub fn get_file_chunks(
@@ -55,3 +55,4 @@ pub fn get_file_chunks(
 }
 
 // TODO: merge with chunks if "open_file" is not used
+
