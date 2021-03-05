@@ -19,7 +19,6 @@ pub mod action;
 pub mod chunks;
 pub mod condition;
 pub mod download;
-pub mod file;
 pub mod glob;
 pub mod groups;
 pub mod hash;
