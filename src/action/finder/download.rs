@@ -71,7 +71,6 @@ pub struct ChunkId {
     length: u64,
 }
 
-// TODO: test it
 impl ChunkId {
     /// Creates a chunk identifier for the given chunk.
     pub fn make(chunk: &Vec<u8>, offset: u64) -> ChunkId {
