@@ -222,33 +222,6 @@ pub fn fold_constant_components(
 mod tests {
     use super::*;
 
-    fn assert_glob_component(component: &PathComponent, expected_regex: &str) {
-        match component {
-            PathComponent::Glob(regex) => {
-                assert_eq!(regex.as_str(), expected_regex);
-            }
-            _ => panic!(
-                "expected glob component: {}, got: {:?}",
-                expected_regex, component
-            ),
-        }
-    }
-
-    fn assert_recursive_scan_component(
-        component: &PathComponent,
-        expected_depth: i32,
-    ) {
-        match component {
-            PathComponent::RecursiveScan { max_depth } => {
-                assert_eq!(max_depth, &expected_depth);
-            }
-            _ => panic!(
-                "expected recursive scan component: {}, got: {:?}",
-                expected_depth, component
-            ),
-        }
-    }
-
     #[test]
     fn basic_parse_path_test() {
         let task = build_task(
@@ -260,9 +233,9 @@ mod tests {
                 .join("??[!qwe]"),
         );
         assert_eq!(task.path_prefix, PathBuf::from("/home/user"));
-        assert_recursive_scan_component(&task.current_component, 5);
+        assert!(matches!(&task.current_component, PathComponent::RecursiveScan {max_depth: 5}));
         assert_eq!(task.remaining_components.len(), 1);
-        assert_glob_component(&task.remaining_components[0], "^..[^qwe]$");
+        assert!(matches!(&task.remaining_components[0], PathComponent::Glob("^..[^qwe]$"){max_depth: 5}));
     }
 
     #[test]
@@ -270,7 +243,7 @@ mod tests {
         let task =
             build_task(&PathBuf::new().join(Component::RootDir).join("**"));
         assert_eq!(task.path_prefix, PathBuf::from("/"));
-        assert_recursive_scan_component(&task.current_component, 3);
+        assert!(matches!(&task.current_component, PathComponent::RecursiveScan {max_depth: 3}));
         assert_eq!(task.remaining_components.len(), 0);
     }
 }
