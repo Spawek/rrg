@@ -148,4 +148,23 @@ mod tests {
         assert_eq!(chunks.next().unwrap().unwrap(), vec![3, 4, 5]);
         assert!(chunks.next().is_none());
     }
+
+    #[test]
+    fn test_get_file_chunks_basic_use_case() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("f");
+        std::fs::write(&path, [1,2,3,4,5,6]).unwrap();
+
+        let mut chunks = get_file_chunks(&path, &GetFileChunksConfig{
+            start_offset: 1,
+            max_read_bytes: 4,
+            bytes_per_chunk: 2,
+            overlap_bytes: 1,
+        }).unwrap();
+
+        assert_eq!(chunks.next().unwrap().unwrap(), vec![2, 3]);
+        assert_eq!(chunks.next().unwrap().unwrap(), vec![3, 4]);
+        assert_eq!(chunks.next().unwrap().unwrap(), vec![4, 5]);
+        assert!(chunks.next().is_none());
+    }
 }
