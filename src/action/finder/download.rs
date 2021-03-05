@@ -286,8 +286,13 @@ mod tests {
     #[test]
     fn test_chunk_id() {
         let chunk = ChunkId::make(&"some_test_data".as_bytes().to_vec(), 5);
-        assert_eq!(&chunk.length, 14);
-        assert_eq!(&chunk.offset, 5);
-        assert_eq!(&chunk.sha256, 5);
+        assert_eq!(&chunk.length, &14);
+        assert_eq!(&chunk.offset, &5);
+        assert_eq!(&chunk.sha256, &[
+            0xd7, 0x6d, 0x85, 0xad, 0xca, 0x8a, 0xfa, 0xd2, 0x05, 0xed,
+            0xeb, 0xc1, 0x1f, 0x9b, 0x50, 0x86, 0xbc, 0xa7, 0x5a, 0xcb,
+            0x51, 0x2a, 0x74, 0x8b, 0xc7, 0x96, 0x60, 0xe1, 0x34, 0x6a,
+            0xf5, 0x46
+        ]);
     }
 }
