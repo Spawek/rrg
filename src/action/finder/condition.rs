@@ -368,7 +368,9 @@ mod tests {
         let path = tempdir.path().join("f");
         std::fs::write(&path, "test").unwrap();
 
-        // Wait at least 10ms before reading to ensure that the access time will be updated.
+        // Wait at least 10ms before reading to ensure that the access time
+        // will be updated. Updating access time is dependent on OS
+        // configuration, which may cause this test to fail.
         sleep(Duration::from_millis(100));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "test");
 
@@ -418,7 +420,9 @@ mod tests {
 
         let modify_time = path.metadata().unwrap().modified().unwrap();
 
-        // Wait at least 10ms before reading to ensure that the change time will be updated.
+        // Wait at least 10ms before reading to ensure that the change time
+        // will be updated. Updating change time is dependent on OS
+        // configuration, which may cause this test to fail.
         sleep(Duration::from_millis(1000));
         let mut perms = path.metadata().unwrap().permissions();
         perms.set_readonly(true);
