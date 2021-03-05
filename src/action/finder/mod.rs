@@ -16,16 +16,16 @@
 //! is performed on the server side, so it's out of scope of this handler.
 
 pub mod action;
+pub mod chunks;
+pub mod condition;
 pub mod download;
+pub mod file;
 pub mod glob;
 pub mod groups;
 pub mod hash;
 pub mod path;
 pub mod request;
 pub mod task;
-pub mod condition;
-pub mod chunks;
-pub mod file;
 
 // Life of a path:
 // - in the input proto FileFinderArgs::paths are `String`.

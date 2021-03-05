@@ -88,7 +88,7 @@ fn check_condition(condition: &Condition, entry: &Entry) -> bool {
             linux_bits_unset,
             ..
         } => {
-            // TODO: support osx bits
+            // TODO(spawek): support osx bits
             let mut ok = true;
 
             #[cfg(target_family = "unix")]
@@ -189,7 +189,7 @@ fn matches(
     matches
 }
 
-// Reads inode change time from metadata.
+/// Reads inode change time from metadata.
 fn read_ctime(metadata: &Metadata) -> Option<std::time::SystemTime> {
     let time = std::time::UNIX_EPOCH
         .checked_add(std::time::Duration::from_secs(metadata.ctime() as u64))?;
@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_matching_conditions(){
+    fn test_multiple_matching_conditions() {
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("f");
         std::fs::write(&path, "test").unwrap();
@@ -472,16 +472,17 @@ mod tests {
             path,
         };
 
-        assert!(check_conditions(&vec![
-            Condition::Size {
-                min: None,
-                max: None,
-            },
-            Condition::Size {
-                min: None,
-                max: None,
-            }
-        ],
+        assert!(check_conditions(
+            &vec![
+                Condition::Size {
+                    min: None,
+                    max: None,
+                },
+                Condition::Size {
+                    min: None,
+                    max: None,
+                }
+            ],
             &entry
         ));
     }
@@ -496,17 +497,18 @@ mod tests {
             path,
         };
 
-        assert!(!check_conditions(&vec![
-            Condition::Size {
-                min: Some(5),
-                max: None,
-            },
-            Condition::Size {
-                min: None,
-                max: None,
-            }
-        ],
-                                 &entry
+        assert!(!check_conditions(
+            &vec![
+                Condition::Size {
+                    min: Some(5),
+                    max: None,
+                },
+                Condition::Size {
+                    min: None,
+                    max: None,
+                }
+            ],
+            &entry
         ));
     }
 

@@ -6,6 +6,7 @@ use crate::fs::Entry;
 use log::warn;
 use rrg_proto::file_finder_download_action_options::OversizedFilePolicy as DownloadOversizedFilePolicy;
 use rrg_proto::file_finder_hash_action_options::OversizedFilePolicy as HashOversizedFilePolicy;
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{BufReader, Read, Take};
 
@@ -59,6 +60,65 @@ pub fn download(entry: &Entry, config: &DownloadActionOptions) -> Response {
             overlap_bytes: 0,
         },
     ))
+}
+
+/// A type representing unique identifier of a given chunk.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ChunkId {
+    /// A SHA-256 digest of the referenced chunk data.
+    sha256: [u8; 32],
+    offset: u64,
+    length: u64,
+}
+
+// TODO: test it
+impl ChunkId {
+    /// Creates a chunk identifier for the given chunk.
+    pub fn make(chunk: &Vec<u8>, offset: u64) -> ChunkId {
+        ChunkId {
+            sha256: Sha256::digest(&chunk).into(),
+            length: chunk.len() as u64,
+            offset,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DownloadEntry {
+    pub chunk_ids: Vec<ChunkId>,
+    pub chunk_size: u64,
+}
+
+impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
+    fn from(entry: DownloadEntry) -> rrg_proto::BlobImageDescriptor {
+        rrg_proto::BlobImageDescriptor {
+            chunks: entry
+                .chunk_ids
+                .into_iter()
+                .map(|x| rrg_proto::BlobImageChunkDescriptor {
+                    offset: Some(x.offset),
+                    length: Some(x.length),
+                    digest: Some(x.sha256.to_vec()),
+                })
+                .collect::<Vec<_>>(),
+            chunk_size: Some(entry.chunk_size),
+        }
+    }
+}
+
+/// A type representing a particular chunk of the returned timeline.
+pub struct Chunk {
+    pub data: Vec<u8>,
+}
+
+impl super::super::Response for Chunk {
+    const RDF_NAME: Option<&'static str> = Some("DataBlob");
+
+    type Proto = rrg_proto::DataBlob;
+
+    fn into_proto(self) -> rrg_proto::DataBlob {
+        self.data.into()
+    }
 }
 
 #[cfg(test)]
@@ -221,5 +281,13 @@ mod tests {
             "e_".bytes().collect::<Vec<_>>()
         );
         assert!(chunks.next().is_none());
+    }
+
+    #[test]
+    fn test_chunk_id() {
+        let chunk = ChunkId::make(&"some_test_data".as_bytes().to_vec(), 5);
+        assert_eq!(&chunk.length, 14);
+        assert_eq!(&chunk.offset, 5);
+        assert_eq!(&chunk.sha256, 5);
     }
 }

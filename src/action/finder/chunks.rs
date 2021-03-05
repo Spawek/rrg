@@ -33,7 +33,8 @@ impl<R: std::io::Read> std::iter::Iterator for Chunks<R> {
             ret.push(byte);
 
             if ret.len() == self.config.bytes_per_chunk as usize {
-                let overlap_start = ret.len() - self.config.overlap_bytes as usize;
+                let overlap_start =
+                    ret.len() - self.config.overlap_bytes as usize;
                 self.overlap_data = Vec::from(&ret[overlap_start..]);
                 return Some(Ok(ret));
             }

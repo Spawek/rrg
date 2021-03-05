@@ -1,12 +1,16 @@
 use crate::action::finder::chunks::{chunks, Chunks, ChunksConfig};
+use log::warn;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom, Take};
 use std::path::Path;
-use log::warn;
 
 // TODO: test offset
 // TODO: maybe pub not needed
-pub fn open_file(path: &Path, offset: u64, max_size: u64) -> Option<Take<File>> {
+pub fn open_file(
+    path: &Path,
+    offset: u64,
+    max_size: u64,
+) -> Option<Take<File>> {
     match File::open(path) {
         Ok(mut f) => {
             if let Err(err) = f.seek(SeekFrom::Start(offset)) {
@@ -20,11 +24,7 @@ pub fn open_file(path: &Path, offset: u64, max_size: u64) -> Option<Take<File>> 
             Some(f.take(max_size))
         }
         Err(err) => {
-            warn!(
-                "failed to open file: {}, error: {}",
-                path.display(),
-                err
-            );
+            warn!("failed to open file: {}, error: {}", path.display(), err);
             None
         }
     }
@@ -42,8 +42,7 @@ pub fn get_file_chunks(
     path: &Path,
     config: &GetFileChunksConfig,
 ) -> Option<Chunks<BufReader<Take<File>>>> {
-    let file =
-        open_file(&path, config.start_offset, config.max_read_bytes)?;
+    let file = open_file(&path, config.start_offset, config.max_read_bytes)?;
 
     Some(chunks(
         BufReader::new(file),
@@ -55,4 +54,3 @@ pub fn get_file_chunks(
 }
 
 // TODO: merge with chunks if "open_file" is not used
-

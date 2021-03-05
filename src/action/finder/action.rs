@@ -43,8 +43,11 @@
 // - `hash` and `download` actions should follow the links.
 
 use super::request::*;
+use crate::action::finder::condition::{check_conditions, find_matches};
 use crate::action::finder::download;
-use crate::action::finder::download::download;
+use crate::action::finder::download::{
+    download, Chunk, ChunkId, DownloadEntry,
+};
 use crate::action::finder::groups::expand_groups;
 use crate::action::finder::hash::hash;
 use crate::action::finder::path::normalize;
@@ -61,77 +64,9 @@ use crate::session::{self, Session, UnsupportedActonParametersError};
 use log::{info, warn};
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
-use rrg_proto::{FileFinderResult, BufferReference};
 use rrg_proto::Hash as HashEntry;
-use sha2::{Digest, Sha256};
+use rrg_proto::{BufferReference, FileFinderResult};
 use std::path::{Path, PathBuf};
-use crate::action::finder::condition::{find_matches, check_conditions};
-
-// TODO: copied from timeline
-/// A type representing unique identifier of a given chunk.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct ChunkId {
-    /// A SHA-256 digest of the referenced chunk data.
-    sha256: [u8; 32],
-    offset: u64,
-    length: u64,
-}
-
-impl ChunkId {
-    /// Creates a chunk identifier for the given chunk.
-    fn make(chunk: &Chunk, offset: u64) -> ChunkId {
-        ChunkId {
-            sha256: Sha256::digest(&chunk.data).into(),
-            length: chunk.data.len() as u64,
-            offset,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct DownloadEntry {
-    chunk_ids: Vec<ChunkId>,
-    chunk_size: u64,
-}
-
-impl From<DownloadEntry> for rrg_proto::BlobImageDescriptor {
-    fn from(e: DownloadEntry) -> rrg_proto::BlobImageDescriptor {
-        rrg_proto::BlobImageDescriptor {
-            chunks: e
-                .chunk_ids
-                .into_iter()
-                .map(|x| rrg_proto::BlobImageChunkDescriptor {
-                    offset: Some(x.offset),
-                    length: Some(x.length),
-                    digest: Some(x.sha256.to_vec()),
-                })
-                .collect::<Vec<_>>(),
-            chunk_size: Some(e.chunk_size),
-        }
-    }
-}
-
-/// A type representing a particular chunk of the returned timeline.
-struct Chunk {
-    data: Vec<u8>,
-}
-
-impl Chunk {
-    /// Constructs a chunk from the given blob of bytes.
-    fn from_bytes(data: Vec<u8>) -> Chunk {
-        Chunk { data }
-    }
-}
-
-impl super::super::Response for Chunk {
-    const RDF_NAME: Option<&'static str> = Some("DataBlob");
-
-    type Proto = rrg_proto::DataBlob;
-
-    fn into_proto(self) -> rrg_proto::DataBlob {
-        self.data.into()
-    }
-}
 
 #[derive(Debug)]
 enum Response {
@@ -237,7 +172,7 @@ fn perform_action<S: Session>(
                     };
                     for chunk in chunks {
                         let chunk = match chunk {
-                            Ok(chunk) => Chunk::from_bytes(chunk),
+                            Ok(chunk) => chunk,
                             Err(err) => {
                                 warn!(
                                     "failed to read file: {}, error: {}",
@@ -249,11 +184,15 @@ fn perform_action<S: Session>(
                         };
 
                         response.chunk_ids.push(ChunkId::make(&chunk, offset));
-                        offset = offset + chunk.data.len() as u64;
-                        session.send(session::Sink::TRANSFER_STORE, chunk)?;
+                        offset = offset + chunk.len() as u64;
+                        session.send(
+                            session::Sink::TRANSFER_STORE,
+                            Chunk { data: chunk },
+                        )?;
                     }
 
-                    session.reply(Response::Download(response, stat, matches))?;
+                    session
+                        .reply(Response::Download(response, stat, matches))?;
                 }
             },
         },
@@ -297,7 +236,7 @@ pub fn handle<S: Session>(
     let entries = paths.iter().flat_map(|x| resolve_path(x, req.follow_links));
 
     for entry in entries {
-        if !check_conditions(&req.conditions, &entry){
+        if !check_conditions(&req.conditions, &entry) {
             continue;
         }
 
