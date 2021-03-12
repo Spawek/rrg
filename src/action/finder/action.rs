@@ -50,7 +50,7 @@ use crate::action::finder::download::{
 };
 use crate::action::finder::error::Error;
 use crate::action::finder::groups::expand_groups;
-use crate::action::finder::hash::hash;
+use crate::action::finder::hash::{hash, FileHash};
 use crate::action::finder::path::normalize;
 use crate::action::finder::request::Action;
 use crate::action::finder::task::{
@@ -65,7 +65,6 @@ use crate::session::{self, Session};
 use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
-use rrg_proto::Hash as HashEntry;
 use rrg_proto::{BufferReference, FileFinderResult};
 use std::path::{Path, PathBuf};
 
@@ -73,7 +72,7 @@ use std::path::{Path, PathBuf};
 enum Response {
     Stat(StatEntry, Vec<BufferReference>),
     /// GRR Hash action returns also StatEntry, we keep the same behavior.
-    Hash(HashEntry, StatEntry, Vec<BufferReference>),
+    Hash(FileHash, StatEntry, Vec<BufferReference>),
     Download(DownloadEntry, StatEntry, Vec<BufferReference>),
 }
 
@@ -93,7 +92,7 @@ impl super::super::Response for Response {
             Response::Hash(hash, stat, matches) => FileFinderResult {
                 matches,
                 stat_entry: Some(stat.into_proto()),
-                hash_entry: Some(hash),
+                hash_entry: Some(hash.into()),
                 transferred_file: None,
             },
             Response::Download(download, stat, matches) => FileFinderResult {

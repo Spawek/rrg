@@ -300,7 +300,7 @@ mod tests {
         let task = build_task(&path);
         assert!(
             matches!(task.unwrap_err(),
-             error::MultipleRecursiveComponentsInPath(err_path)
+             Error::MultipleRecursiveComponentsInPath(err_path)
              if err_path == path)
         );
     }
