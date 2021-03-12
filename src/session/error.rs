@@ -297,37 +297,3 @@ impl From<UnknownEnumValueError> for ParseError {
         ParseError::malformed(error)
     }
 }
-
-#[derive(Debug)]
-pub struct UnsupportedActonParametersError {
-    pub message: String,
-}
-
-impl Display for UnsupportedActonParametersError {
-    fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
-        write!(
-            fmt,
-            "Unsupported request error: {}",
-            self.message
-        )
-    }
-}
-
-impl UnsupportedActonParametersError {
-    /// Creates a new error indicating that the request type is not supported.
-    pub fn new(message: String) -> UnsupportedActonParametersError {
-        UnsupportedActonParametersError { message }
-    }
-}
-
-impl std::error::Error for UnsupportedActonParametersError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
-
-impl From<UnsupportedActonParametersError> for Error {
-    fn from(e: UnsupportedActonParametersError) -> Error {
-        Error::Action(Box::new(e))
-    }
-}

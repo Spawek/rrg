@@ -61,8 +61,8 @@ use crate::action::stat::{
 };
 use crate::fs;
 use crate::fs::{list_dir, Entry};
-use crate::session::{self, Session, UnsupportedActonParametersError};
-use log::{info, warn};
+use crate::session::{self, Session};
+use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
 use rrg_proto::Hash as HashEntry;
@@ -109,11 +109,7 @@ impl super::super::Response for Response {
 fn into_absoute_path(s: String) -> session::Result<PathBuf> {
     let path = PathBuf::from(&s);
     if !path.is_absolute() {
-        return Err(UnsupportedActonParametersError::new(format!(
-            "Non-absolute paths are not supported: {}",
-            &s
-        ))
-        .into());
+        return Err(Error::NonAbsolutePath(path).into());
     }
     Ok(path)
 }
@@ -209,22 +205,15 @@ pub fn handle<S: Session>(
     session: &mut S,
     req: Request,
 ) -> session::Result<()> {
-    // TODO: TMP remove!
-    info!("File Finder request: {:#?}", &req);
-
     if req.process_non_regular_files {
-        return Err(UnsupportedActonParametersError::new(
-            "process_non_regular_files parameter is not supported".to_string(),
+        return Err(Error::UnsupportedParameter(
+            "process_non_regular_files".to_string(),
         )
         .into());
     }
 
     if req.xdev_mode != XDev::Local {
-        return Err(UnsupportedActonParametersError::new(format!(
-            "unsupported XDev mode: {:?}",
-            req.xdev_mode
-        ))
-        .into());
+        return Err(Error::UnsupportedXDevMode(req.xdev_mode).into());
     }
 
     let paths = req

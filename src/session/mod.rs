@@ -29,8 +29,7 @@ use crate::action;
 use crate::message;
 pub use self::demand::{Demand, Header, Payload};
 pub use self::error::{Error, ParseError, MissingFieldError, RegexParseError,
-                      UnsupportedValueError, UnknownEnumValueError,
-                      UnsupportedActonParametersError};
+                      UnsupportedValueError, UnknownEnumValueError};
 use self::response::{Response, Status};
 pub use self::sink::Sink;
 pub use self::time::time_from_micros;

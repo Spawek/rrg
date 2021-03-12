@@ -1,11 +1,15 @@
 use crate::session;
 use std::path::PathBuf;
+type XDevMode = rrg_proto::file_finder_args::XDev;
 
 /// An error type for failures that can occur during the timeline action.
 #[derive(Debug)]
 pub enum Error {
-    InvalidRecursiveComponentInPath { path: String },
+    InvalidRecursiveComponentInPath(PathBuf),
     MultipleRecursiveComponentsInPath(PathBuf),
+    NonAbsolutePath(PathBuf),
+    UnsupportedParameter(String),
+    UnsupportedXDevMode(XDevMode),
 }
 
 // TODO: needed?
@@ -20,16 +24,34 @@ impl std::fmt::Display for Error {
         use Error::*;
 
         match *self {
-            InvalidRecursiveComponentInPath { ref path } => write!(
+            InvalidRecursiveComponentInPath ( ref path ) => write!(
                 fmt,
-                "Path contains an invalid recursive component: {}",
-                path
+                "Client Side File Finder path contains an invalid recursive component: {}",
+                path.display()
             ),
 
-            MultipleRecursiveComponentsInPath (ref path) => write!(
+            MultipleRecursiveComponentsInPath(ref path) => write!(
                 fmt,
-                "Path contains more then 1 recursive component: {}",
+                "Client Side File Finder path contains more then 1 recursive component: {}",
                 path.display()
+            ),
+
+            NonAbsolutePath(ref path) => write!(
+                fmt,
+                "Client Side File Finder path is not absolute: {}",
+                path.display()
+            ),
+
+            UnsupportedParameter(ref parameter) => write!(
+                fmt,
+                "Client Side File Finder parameter: {} is not supported",
+                parameter
+            ),
+
+            UnsupportedXDevMode(ref mode) => write!(
+                fmt,
+                "Client Side File Finder XDev mode: {:?} is not supported",
+                mode
             ),
         }
     }

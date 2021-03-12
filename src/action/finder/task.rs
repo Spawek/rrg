@@ -125,8 +125,15 @@ pub fn build_task(path: &Path) -> Result<Task, Error> {
         .map(|x| get_path_component(&x))
         .collect::<Result<Vec<PathComponent>, Error>>()?;
 
-    if components.iter().filter(|x| matches!(x, PathComponent::RecursiveScan {..})).count() > 1 {
-        return Err(Error::MultipleRecursiveComponentsInPath(path.to_path_buf()));
+    if components
+        .iter()
+        .filter(|x| matches!(x, PathComponent::RecursiveScan {..}))
+        .count()
+        > 1
+    {
+        return Err(Error::MultipleRecursiveComponentsInPath(
+            path.to_path_buf(),
+        ));
     }
 
     Ok(build_task_from_components(fold_constant_components(
@@ -172,9 +179,7 @@ fn get_recursive_scan_component(
     };
 
     if !captures["remaining"].is_empty() {
-        return Err(Error::InvalidRecursiveComponentInPath {
-            path: s.to_owned(),
-        });
+        return Err(Error::InvalidRecursiveComponentInPath(PathBuf::from(s)));
     }
 
     let max_depth = match &captures["max_depth"] {
@@ -182,9 +187,9 @@ fn get_recursive_scan_component(
         val @ _ => match val.parse::<i32>() {
             Ok(v) => v,
             Err(_) => {
-                return Err(Error::InvalidRecursiveComponentInPath {
-                    path: s.to_owned(),
-                })
+                return Err(Error::InvalidRecursiveComponentInPath(
+                    PathBuf::from(s),
+                ));
             }
         },
     };
@@ -281,13 +286,22 @@ mod tests {
     #[test]
     fn test_recursive_scan_with_additional_letters() {
         let task =
-            build_task(&PathBuf::new().join(Component::RootDir).join("**5asd"))
-                .unwrap();
-        assert_eq!(task.path_prefix, PathBuf::from("/"));
-        dbg!(&task);
+            build_task(&PathBuf::new().join(Component::RootDir).join("**5asd"));
         assert!(
-            matches!(&task.current_component, PathComponent::Constant(path) if path.as_os_str() == "**5asd")
+            matches!(task.unwrap_err(),
+            Error::InvalidRecursiveComponentInPath(path)
+            if path == PathBuf::from("**5asd"))
         );
-        assert_eq!(task.remaining_components.len(), 0);
+    }
+
+    #[test]
+    fn test_path_with_multiple_recursive_scans() {
+        let path = PathBuf::new().join(Component::RootDir).join("**/asd/**");
+        let task = build_task(&path);
+        assert!(
+            matches!(task.unwrap_err(),
+             error::MultipleRecursiveComponentsInPath(err_path)
+             if err_path == path)
+        );
     }
 }
