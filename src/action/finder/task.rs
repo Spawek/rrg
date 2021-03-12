@@ -1,3 +1,4 @@
+use crate::action::finder::error::Error;
 use crate::action::finder::glob::glob_to_regex;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -12,7 +13,11 @@ pub enum PathComponent {
     RecursiveScan { max_depth: i32 }, // glob recursive component - `**` in path
 }
 
-/// File finder task to be executed.
+/// Internal path representation used for resolving paths.
+/// E.g. `/home/**1/*/test` path would be stored as:
+/// path_prefix: `/home`,
+/// current_component: `**1`,
+/// remaining_components: [`*`, `test`].
 #[derive(Debug)]
 pub struct Task {
     /// Path prefix in which scope the task must be executed.
@@ -114,62 +119,77 @@ fn build_task_from_components(components: Vec<PathComponent>) -> Task {
     }
 }
 
-pub fn build_task(path: &Path) -> Task {
-    let components =
-        path.components().map(|x| get_path_component(&x)).collect();
+pub fn build_task(path: &Path) -> Result<Task, Error> {
+    let components = path
+        .components()
+        .map(|x| get_path_component(&x))
+        .collect::<Result<Vec<PathComponent>, Error>>()?;
 
-    build_task_from_components(fold_constant_components(components))
+    if components.iter().filter(|x| matches!(x, PathComponent::RecursiveScan {..})).count() > 1 {
+        return Err(Error::MultipleRecursiveComponentsInPath(path.to_path_buf()));
+    }
+
+    Ok(build_task_from_components(fold_constant_components(
+        components,
+    )))
 }
 
-fn get_path_component(component: &Component) -> PathComponent {
+fn get_path_component(component: &Component) -> Result<PathComponent, Error> {
     let s = match component {
-        Component::Normal(p) => match p.to_str() {
+        Component::Normal(path) => match path.to_str() {
             Some(s) => s,
-            None => return PathComponent::Constant(PathBuf::from(component)),
+            None => {
+                return Ok(PathComponent::Constant(PathBuf::from(component)))
+            }
         },
-        _ => return PathComponent::Constant(PathBuf::from(component)),
+        _ => return Ok(PathComponent::Constant(PathBuf::from(component))),
     };
 
-    let recursive_scan = get_recursive_scan_component(s);
-    if recursive_scan.is_some() {
-        return recursive_scan.unwrap();
+    if let Some(scan) = get_recursive_scan_component(s)? {
+        return Ok(scan);
     }
 
-    let glob = get_glob_component(s);
-    if glob.is_some() {
-        return glob.unwrap();
+    if let Some(glob) = get_glob_component(s) {
+        return Ok(glob);
     }
 
-    PathComponent::Constant(PathBuf::from(s))
+    Ok(PathComponent::Constant(PathBuf::from(s)))
 }
 
-fn get_recursive_scan_component(s: &str) -> Option<PathComponent> {
+fn get_recursive_scan_component(
+    s: &str,
+) -> Result<Option<PathComponent>, Error> {
     const DEFAULT_DEPTH: i32 = 3;
 
     lazy_static! {
         static ref RECURSIVE_SCAN_MATCHER: Regex =
-            Regex::new(r"\*\*(?P<max_depth>\d*)").unwrap();
+            Regex::new(r"\*\*(?P<max_depth>\d*)(?P<remaining>.*)").unwrap();
     }
 
-    match RECURSIVE_SCAN_MATCHER.captures(s) {
-        Some(m) => {
-            let max_depth = if m["max_depth"].is_empty() {
-                DEFAULT_DEPTH
-            } else {
-                let v = m["max_depth"].parse::<i32>();
-                if v.is_err() {
-                    return None; // TODO: throw some error
-                }
-                v.unwrap()
-            };
-            Some(PathComponent::RecursiveScan { max_depth })
-        }
-        None => {
-            return None;
-        }
+    let captures = match RECURSIVE_SCAN_MATCHER.captures(s) {
+        Some(captures) => captures,
+        None => return Ok(None),
+    };
+
+    if !captures["remaining"].is_empty() {
+        return Err(Error::InvalidRecursiveComponentInPath {
+            path: s.to_owned(),
+        });
     }
 
-    // TODO: throw ValueError("malformed recursive component") when there is something more in the match
+    let max_depth = match &captures["max_depth"] {
+        "" => DEFAULT_DEPTH,
+        val @ _ => match val.parse::<i32>() {
+            Ok(v) => v,
+            Err(_) => {
+                return Err(Error::InvalidRecursiveComponentInPath {
+                    path: s.to_owned(),
+                })
+            }
+        },
+    };
+
+    Ok(Some(PathComponent::RecursiveScan { max_depth }))
 }
 
 fn get_glob_component(s: &str) -> Option<PathComponent> {
@@ -223,7 +243,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn basic_parse_path_test() {
+    fn test_basic_parse_path() {
         let task = build_task(
             &PathBuf::new()
                 .join(Component::RootDir)
@@ -231,19 +251,43 @@ mod tests {
                 .join("user")
                 .join("**5")
                 .join("??[!qwe]"),
-        );
+        )
+        .unwrap();
+
         assert_eq!(task.path_prefix, PathBuf::from("/home/user"));
-        assert!(matches!(&task.current_component, PathComponent::RecursiveScan {max_depth: 5}));
+        assert!(matches!(
+            &task.current_component,
+            PathComponent::RecursiveScan { max_depth: 5 }
+        ));
         assert_eq!(task.remaining_components.len(), 1);
-        assert!(matches!(&task.remaining_components[0], PathComponent::Glob("^..[^qwe]$"){max_depth: 5}));
+        assert!(
+            matches!(&task.remaining_components[0], PathComponent::Glob(regex) if regex.as_str() == "^..[^qwe]$")
+        );
     }
 
     #[test]
-    fn default_glob_depth_test() {
+    fn test_default_recursive_scan_default_depth() {
         let task =
-            build_task(&PathBuf::new().join(Component::RootDir).join("**"));
+            build_task(&PathBuf::new().join(Component::RootDir).join("**"))
+                .unwrap();
         assert_eq!(task.path_prefix, PathBuf::from("/"));
-        assert!(matches!(&task.current_component, PathComponent::RecursiveScan {max_depth: 3}));
+        assert!(matches!(
+            &task.current_component,
+            PathComponent::RecursiveScan { max_depth: 3 }
+        ));
+        assert_eq!(task.remaining_components.len(), 0);
+    }
+
+    #[test]
+    fn test_recursive_scan_with_additional_letters() {
+        let task =
+            build_task(&PathBuf::new().join(Component::RootDir).join("**5asd"))
+                .unwrap();
+        assert_eq!(task.path_prefix, PathBuf::from("/"));
+        dbg!(&task);
+        assert!(
+            matches!(&task.current_component, PathComponent::Constant(path) if path.as_os_str() == "**5asd")
+        );
         assert_eq!(task.remaining_components.len(), 0);
     }
 }
