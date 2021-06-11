@@ -51,14 +51,14 @@ use crate::action::finder::download::{
 };
 use crate::action::finder::error::Error;
 use crate::action::finder::groups::expand_groups;
-use crate::action::finder::hash::{hash, FileHash};
+use crate::action::finder::hash::hash;
 use crate::action::finder::path::normalize;
 use crate::action::finder::request::Action;
 use crate::action::finder::task::{
     build_task, PathComponent, Task, TaskBuilder,
 };
 use crate::action::stat::{
-    stat, Request as StatRequest, Response as StatEntry,
+    stat, Request as StatRequest
 };
 use crate::fs;
 use crate::fs::{list_dir, Entry};
@@ -66,47 +66,11 @@ use crate::session::{self, Session};
 use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
-use rrg_proto::{BufferReference, FileFinderResult};
 use std::fs::File;
 use std::io::{BufReader, Take};
 use std::path::{Path, PathBuf};
-
-#[derive(Debug)]
-enum Response {
-    Stat(StatEntry, Vec<BufferReference>),
-    /// GRR Hash action returns also StatEntry, we keep the same behavior.
-    Hash(FileHash, StatEntry, Vec<BufferReference>),
-    Download(DownloadEntry, StatEntry, Vec<BufferReference>),
-}
-
-impl super::super::Response for Response {
-    const RDF_NAME: Option<&'static str> = Some("FileFinderResult");
-
-    type Proto = FileFinderResult;
-
-    fn into_proto(self) -> FileFinderResult {
-        match self {
-            Response::Stat(stat, matches) => FileFinderResult {
-                matches,
-                stat_entry: Some(stat.into_proto()),
-                hash_entry: None,
-                transferred_file: None,
-            },
-            Response::Hash(hash, stat, matches) => FileFinderResult {
-                matches,
-                stat_entry: Some(stat.into_proto()),
-                hash_entry: Some(hash.into()),
-                transferred_file: None,
-            },
-            Response::Download(download, stat, matches) => FileFinderResult {
-                matches,
-                stat_entry: Some(stat.into_proto()),
-                hash_entry: None,
-                transferred_file: Some(download.into()),
-            },
-        }
-    }
-}
+use crate::action::finder::response::Response;
+use rrg_proto::BufferReference;
 
 fn into_absoute_path(s: String) -> session::Result<PathBuf> {
     let path = PathBuf::from(&s);
@@ -279,6 +243,8 @@ fn resolve_path(
     })
 }
 
+/// Implements `Iterator` for resolving all entries in a path, which can
+/// contain globs (e.g. '123*') or recursive scans (e.g. '**').
 struct ResolvePath {
     /// Results buffered to be returned.
     outputs: Vec<Entry>,
@@ -333,6 +299,7 @@ fn resolve_task(task: Task, follow_links: bool) -> TaskResults {
     }
 }
 
+/// Implements `Iterator` for getting all entries in a given path.`
 enum ListPath {
     Next(Option<Entry>),
     ListDir(fs::ListDir),
