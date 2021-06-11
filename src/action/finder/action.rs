@@ -164,14 +164,16 @@ fn upload_chunks<S: Session>(
     Ok(Some(entry))
 }
 
-// TODO: doc
+/// Performs requested action (`stat`, `hash` or `download`) on
+/// the specified entry.
 fn perform_action<S: Session>(
     session: &mut S,
     entry: &Entry,
     req: &Request,
     matches: Vec<BufferReference>,
 ) -> session::Result<()> {
-    // `stat` is performed as a part of every action.
+    // `stat` is returned as a part of every request, it's the only part of
+    // the response containing file basic file information.
     let stat = match perform_stat_action(entry, &req.stat_options) {
         Ok(v) => v,
         Err(err) => {
