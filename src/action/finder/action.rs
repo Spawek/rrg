@@ -316,6 +316,7 @@ impl std::iter::Iterator for ListPath {
     }
 }
 
+/// Returns iterator over all entries in a given path.
 fn list_path(path: &Path) -> impl Iterator<Item = Entry> {
     let metadata = match path.metadata() {
         Ok(v) => v,
@@ -347,6 +348,8 @@ struct TaskResults {
     outputs: Vec<Entry>,
 }
 
+/// Returns true if last component `path` matches `regex`.
+/// E.g. '/home/abc/111' matches '[1]*' regex.
 fn last_component_matches(path: &Path, regex: &Regex) -> bool {
     let last_component = match path.components().last() {
         Some(v) => v,
