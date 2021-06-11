@@ -5,10 +5,10 @@ use crate::action::stat::{
 };
 use rrg_proto::{BufferReference, FileFinderResult};
 
+/// `Hash` and `Download` actions return also StatEntry.
 #[derive(Debug)]
 pub enum Response {
     Stat(StatEntry, Vec<BufferReference>),
-    /// GRR Hash action returns also StatEntry, we keep the same behavior.
     Hash(FileHash, StatEntry, Vec<BufferReference>),
     Download(DownloadEntry, StatEntry, Vec<BufferReference>),
 }

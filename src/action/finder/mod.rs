@@ -27,6 +27,7 @@ pub mod path;
 pub mod request;
 pub mod task;
 pub mod response;
+pub mod resolve;
 
 // Life of a path:
 // - in the input proto FileFinderArgs::paths are `String`.
