@@ -43,6 +43,7 @@
 // - `hash` and `download` actions should follow the links.
 
 use super::request::*;
+use crate::action::finder::chunks::Chunks;
 use crate::action::finder::condition::{check_conditions, find_matches};
 use crate::action::finder::download;
 use crate::action::finder::download::{
@@ -66,6 +67,8 @@ use log::warn;
 use regex::Regex;
 use rrg_proto::file_finder_args::XDev;
 use rrg_proto::{BufferReference, FileFinderResult};
+use std::fs::File;
+use std::io::{BufReader, Take};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -126,14 +129,49 @@ fn perform_stat_action(
     stat(&stat_request)
 }
 
-// TODO: rename?
+/// Uploads file chunks to the session's transfer store. Returns `None` if
+/// reading file fails.
+fn upload_chunks<S: Session>(
+    session: &mut S,
+    chunks: Chunks<BufReader<Take<File>>>,
+    chunk_size: u64,
+    path: &Path,
+) -> session::Result<Option<DownloadEntry>> {
+    let mut offset = 0;
+    let mut entry = DownloadEntry {
+        chunk_size,
+        chunk_ids: vec![],
+    };
+    for chunk in chunks {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(err) => {
+                warn!(
+                    "reading file: {}, failed after: {} bytes, error: {}",
+                    path.display(),
+                    offset,
+                    err
+                );
+                return Ok(None);
+            }
+        };
+
+        entry.chunk_ids.push(ChunkId::make(&chunk, offset));
+        offset = offset + chunk.len() as u64;
+        session.send(session::Sink::TRANSFER_STORE, Chunk { data: chunk })?;
+    }
+
+    Ok(Some(entry))
+}
+
+// TODO: doc
 fn perform_action<S: Session>(
     session: &mut S,
     entry: &Entry,
     req: &Request,
     matches: Vec<BufferReference>,
 ) -> session::Result<()> {
-    // TODO: solve RETURN_OR_WARN pattern somehow
+    // `stat` is performed as a part of every action.
     let stat = match perform_stat_action(entry, &req.stat_options) {
         Ok(v) => v,
         Err(err) => {
@@ -154,41 +192,27 @@ fn perform_action<S: Session>(
                 }
             }
             Action::Download(config) => match download(&entry, &config) {
-                download::Response::Skip() => {}
+                download::Response::Skip() => (),
                 download::Response::HashRequest(config) => {
                     if let Some(hash) = hash(&entry, &config) {
                         session.reply(Response::Hash(hash, stat, matches))?;
                     }
                 }
                 download::Response::DownloadData(chunks) => {
-                    let mut offset = 0;
-                    let mut response = DownloadEntry {
-                        chunk_size: config.chunk_size,
-                        chunk_ids: vec![],
-                    };
-                    for chunk in chunks {
-                        let chunk = match chunk {
-                            Ok(chunk) => chunk,
-                            Err(err) => {
-                                warn!(
-                                    "failed to read file: {}, error: {}",
-                                    entry.path.display(),
-                                    err
-                                );
-                                return Ok(());
-                            }
-                        };
+                    let download_entry = upload_chunks(
+                        session,
+                        chunks,
+                        config.chunk_size,
+                        &entry.path,
+                    )?;
 
-                        response.chunk_ids.push(ChunkId::make(&chunk, offset));
-                        offset = offset + chunk.len() as u64;
-                        session.send(
-                            session::Sink::TRANSFER_STORE,
-                            Chunk { data: chunk },
-                        )?;
+                    if let Some(download_entry) = download_entry {
+                        session.reply(Response::Download(
+                            download_entry,
+                            stat,
+                            matches,
+                        ))?;
                     }
-
-                    session
-                        .reply(Response::Download(response, stat, matches))?;
                 }
             },
         },
@@ -287,6 +311,7 @@ impl std::iter::Iterator for ResolvePath {
     }
 }
 
+/// Routes resolving task to one of the subfunctions.
 fn resolve_task(task: Task, follow_links: bool) -> TaskResults {
     match &task.current_component {
         PathComponent::Constant(path) => resolve_constant_task(path),
@@ -353,7 +378,7 @@ struct TaskResults {
     outputs: Vec<Entry>,
 }
 
-fn last_component_matches(regex: &Regex, path: &Path) -> bool {
+fn last_component_matches(path: &Path, regex: &Regex) -> bool {
     let last_component = match path.components().last() {
         Some(v) => v,
         None => {
@@ -379,6 +404,7 @@ fn last_component_matches(regex: &Regex, path: &Path) -> bool {
     regex.is_match(last_component)
 }
 
+/// Resolves glob expression (e.g. '123*') in path.
 fn resolve_glob_task(
     glob: &Regex,
     path_prefix: &Path,
@@ -387,7 +413,7 @@ fn resolve_glob_task(
     let mut new_tasks = vec![];
     let mut outputs = vec![];
     for e in list_path(&path_prefix) {
-        if last_component_matches(&glob, &e.path) {
+        if last_component_matches(&e.path, &glob) {
             if remaining_components.is_empty() {
                 outputs.push(e.clone());
             } else {
@@ -403,8 +429,8 @@ fn resolve_glob_task(
     TaskResults { new_tasks, outputs }
 }
 
-/// Checks if Entry is a directory using the symlink_metadata it contains,
-/// and metadata if `follow_links` is set.
+/// Checks if Entry is a directory using `metadata` if `follow_links` is set
+/// or `symlink_metadata` otherwise.
 fn is_dir(e: &Entry, follow_links: bool) -> bool {
     if e.metadata.is_dir() {
         return true;
@@ -425,6 +451,7 @@ fn is_dir(e: &Entry, follow_links: bool) -> bool {
     return false;
 }
 
+/// Resolves recursive expression (e.g. '**') in path.
 fn resolve_recursive_scan_task(
     max_depth: i32,
     path_prefix: &Path,
@@ -459,6 +486,7 @@ fn resolve_recursive_scan_task(
     TaskResults { new_tasks, outputs }
 }
 
+/// Resolves constant expression (just a plain name) in path.
 fn resolve_constant_task(path: &Path) -> TaskResults {
     let mut ret = TaskResults {
         new_tasks: vec![],
@@ -943,15 +971,12 @@ mod tests {
 // TODO: GRR bug: /home/spawek/rrg/**/*toml doesn't find /home/spawek/rrg/Cargo.toml
 // TODO: GRR bug: /home/spawek/rrg/**0/*toml doesn't find /home/spawek/rrg/Cargo.toml
 
-// TODO: conditions - important:
-//     fill matches for `contents_regex_match` and `contents_literal_match` conditions
-
+// TODO: resolve path to a separate file
+// TODO: response to a separate file
 // TODO: dev type support
 // TODO: cleanup function order here
 // TODO: 2 recursive elements throwing an error
 // TODO: do errors like in timeline?
 // TODO: make naming "config/options" consistent
-// TODO: resolve path to another file
 // TODO: response to separate file
-
 // TODO: mby convert paths to (multiple) tasks directly in the request
